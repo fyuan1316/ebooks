@@ -1,46 +1,52 @@
 # 第1章简介
 
-编程Kubernetes对不同的人来说意味着不同的东西。在本章中，我们将首先确定本书的范围和重点。此外，我们将分享关于我们正在运营的环境以及您需要提供什么样的假设，理想情况下，从本书中获益最多。我们将通过编程Kubernetes，Kubernetes本地应用程序是什么来定义我们的意思，并通过查看具体示例，了解它们的特征。我们将讨论控制器和操作器的基础知识，以及事件驱动的Kubernetes原理如何控制平面功能。准备？我们来吧。
+Kubernetes编程对不同的人来说意味着不同的东西。在本章中，我们将首先确定本书的范围和重点。此外，我们将分享关于我们正在运营的环境以及您需要提供什么样的假设（我们假定了一系列的场景，同时结合了在该场景环境下执行相关的操作，希望您借此了解背后的实现机制，进而能从本书中有所收获。我们将进一步描述我们认为的Kubernetes编程是什么，Kubernetes原生应用程序是什么，并通过查看具体示例，了解它们的特征。我们将讨论controller和operator的基础知识，以及基于事件驱动的Kubernetes的控制平面的原理是怎样的。准备好了么？让我们开始吧。
 
-# 编程Kubernetes意味着什么？
+# Kubernetes编程是什么？
 
-我们假设您可以访问正在运行的Kubernetes集群，例如Amazon EKS，Microsoft AKS，Google GKE或其中一个OpenShift产品。
+我们假设您可以访问正在运行的Kubernetes集群，例如Amazon EKS，Microsoft AKS，Google GKE或OpenShift其中一个产品。
 
-###### 小费
+###### 提示
 
-You将花费大量时间在笔记本电脑或桌面环境中进行*本地*开发; 也就是说，您正在开发的Kubernetes集群是本地的，而不是云或数据中心。在本地开发时，您可以使用多种选项。根据您的操作系统和其他首选项，您可以选择一个（或甚至更多）以下解决方案在本地运行Kubernetes：[kind](https://kind.sigs.k8s.io/)，[k3d](http://bit.ly/2Ja1LaH)或[Docker Desktop](https://dockr.ly/2PTJVLL)。[1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#idm46336877072840)
+您将花费大量时间在笔记本电脑或桌面环境中进行*本地*开发; 也就是说，您正在开发的Kubernetes集群是本地的，而不是位于云平台或您的数据中心。在本地开发时，您可以使用多种选项。根据您的操作系统和个人喜好，您可以选择一个（或多个）以下解决方案在本地运行Kubernetes：[kind](https://kind.sigs.k8s.io/)，[k3d](http://bit.ly/2Ja1LaH)或[Docker Desktop](https://dockr.ly/2PTJVLL)。[1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#idm46336877072840)
 
-我们还假设您是Go程序员 - 也就是说，您具有Go编程语言的经验或至少基本熟悉。现在是一个好时机，如果这些假设中的任何一个不适用于你，那么训练：对于Go，我们推荐Alan AA Donovan和Brian W. Kernighan（Addison-Wesley）[*的Go Go Programming Language*](https://www.gopl.io/)和Katherine的[*Go并发*](http://bit.ly/2tdCt5j) Cox-Buday（奥莱利）。对于 Kubernetes，查看以下一本或多本书：
+我们假设您是Go程序员 - 也就是说，您具有Go编程语言的经验或至少基本熟悉。如果您对kubernetes或者Go编程语言不熟悉，现在正是一个熟悉起来的好机会：对于Go，我们推荐Alan AA Donovan和Brian W. Kernighan（Addison-Wesley）[*的Go Go Programming Language*](https://www.gopl.io/)和Katherine的[*Go并发*](http://bit.ly/2tdCt5j) Cox-Buday（奥莱利）。对于 Kubernetes，查看以下一本或多本书：
 
-- 曼宁的[*行动总督*](http://bit.ly/2Tb8Ydo)
-- [*Kubernetes：Up and Running*，第2版](https://oreil.ly/2SaANU4)，Kelsey Hightower等。（O'Reilly）的
-- [*与*](https://oreil.ly/2BaE1iq) John Arundel和Justin[ *Domingus*](https://oreil.ly/2BaE1iq)（O'Reilly）[*合作的Kubernetes*](https://oreil.ly/2BaE1iq)的[ *Cloud Native DevOps*](https://oreil.ly/2BaE1iq)
-- Brendan Burns和Craig Tracey[*管理Kubernetes*](https://oreil.ly/2wtHcAm)（O'Reilly）
-- SébastienGoasguen和Michael Hausenblas（O'Reilly）的[ *Kubernetes Cookbook*](http://bit.ly/2FTgJzk)
+- [*Kubernetes in Action*](http://bit.ly/2Tb8Ydo) by Marko Lukša (Manning)
+
+- [*Kubernetes: Up and Running*, 2nd Edition](https://oreil.ly/2SaANU4) by Kelsey Hightower et al. (O’Reilly)
+
+- [*Cloud Native DevOps with Kubernetes*](https://oreil.ly/2BaE1iq) by John Arundel and Justin Domingus (O’Reilly)
+
+- [*Managing Kubernetes*](https://oreil.ly/2wtHcAm) by Brendan Burns and Craig Tracey (O’Reilly)
+
+- [*Kubernetes Cookbook*](http://bit.ly/2FTgJzk) by Sébastien Goasguen and Michael Hausenblas (O’Reilly)
+
+  
 
 ###### 注意
 
-为什么我们专注于Go中的Kubernetes编程？好吧，类比可能在这里有用：Unix是用C编程语言编写的，如果你想为Unix编写应用程序或工具，你会默认为C.另外，为了扩展和定制Unix - 即使你是使用C以外的语言 - 您至少需要能够阅读C.
+为什么我们专注于Go中的Kubernetes编程？好吧，可以从一个类比中让您更好的理解：Unix是用C编程语言编写的，如果你想为Unix编写应用程序或工具，你会默认选择C语言.另外，为了扩展和定制Unix - 即使你是使用C以外的语言 - 您至少需要能够阅读C语言程序代码.
 
-现在，Kubernetes和许多相关的云原生技术，从容器运行时到监控，如Prometheus，都是用Go编写的。我们相信大多数原生应用程序都是基于Go的，因此我们在本书中专注于它。如果您更喜欢其他语言，请关注[kubernetes-client](http://bit.ly/2xfSrfT) GitHub组织。它可能会继续以您最喜欢的编程语言包含客户端。
+现在，Kubernetes和许多相关的云原生技术，从容器运行时到监控，如Prometheus，都是用Go编写的。我们相信大多数原生应用程序都是基于Go的，因此我们在本书中专注于它。如果您更喜欢其他语言，请关注[kubernetes-client](http://bit.ly/2xfSrfT) GitHub组织。这里有各种编程语言实现的客户端，您可以选择自己最喜欢的，同时这些客户端也在不断的扩充中。
 
-通过在本书的上下文中，“编程Kubernetes”我们的意思如下：您将开发一个Kubernetes本机应用程序，它直接与API服务器交互，查询资源状态和/或更新其状态。我们并不意味着运行现成的应用程序，如WordPress或Rocket Chat或您最喜欢的企业CRM系统，通常称为*商用现成*（COTS）应用程序。此外，在[第7章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#ch_shipping)，我们并没有真正关注运营问题，而是主要关注开发和测试阶段。所以，简而言之，这本书是关于发展的真正的云原生应用程序。[图1-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#apps-on-kube)可能会帮助您更好地吸收它。
+在本书的上下文中，我们所谓的“Kubernetes编程”是指：您将开发一个Kubernetes原生应用程序，它直接与API服务器交互，查询资源状态和/或更新其状态。这个Kubernetes原生的应用程序并不是现成的，相比于WordPress或Rocket Chat或您喜欢的企业CRM系统，这些应用通常称为*商用现成*（COTS）应用程序。此外，在[第7章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#ch_shipping)，我们并没有像现实中那样过多的关注运营问题，而是主要关注开发和测试阶段。所以，简而言之，这本书是主要聚焦于开发真正的云原生应用程序。[图1-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#apps-on-kube)可能会帮助您更好地理解它。
 
 ![在Kubernetes上运行的不同类型的应用程序](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0101.png)
 
 ###### 图1-1。在Kubernetes上运行的不同类型的应用程序
 
-如 你可以看到，有你可以使用的不同风格：
+如你所见，有你可以使用的不同风格：
 
-1. 拿一个像Rocket Chat这样的COTS并在Kubernetes上运行它。应用程序本身并不知道它在Kubernetes上运行，通常不必。Kubernetes控制应用程序的生命周期 - 查找节点以运行，提取图像，启动容器，执行运行状况检查，装载卷等等 - 就是这样。
-2. 拿一个定制的应用程序，你从头开始编写的东西，无论是否考虑到Kubernetes作为运行时环境，并在Kubernetes上运行它。适用与COTS相同的操作方式。
-3. 我们在本书中关注的案例是云本机或Kubernetes本机应用程序，它完全了解它在Kubernetes上运行并在某种程度上利用Kubernetes API和资源。
+1. 拿一个像Rocket Chat这样的COTS并在Kubernetes上运行它。应用程序本身并不知道它在Kubernetes上运行，通常不需要知道。Kubernetes控制应用程序的生命周期 - 查找节点以运行，提取图像，启动容器，执行运行状况检查，装载卷等等 - 诸如此类操作。
+2. 拿一个定制的应用程序，你从头开始编写的东西，无论是否考虑到Kubernetes作为运行时环境，并在Kubernetes上运行它。可以执行的操作类似于上述COTS的操作方式。
+3. 我们在本书中关注的案例是云原生或Kubernetes原生应用程序，它确定在Kubernetes上运行并在某种程度上利用Kubernetes API和资源。
 
-该 您根据Kubernetes API支付的价格得到回报：一方面您获得了可移植性，因为您的应用程序现在可以在任何环境中运行（从内部部署到任何公共云提供商），另一方面您可以从中受益Kubernetes提供的清洁，声明机制。
+针对Kubernetes API进行开发有以下优点：一方面您获得了可移植性，因为您的应用程序现在可以在任何环境中运行（从内部部署到任何公共云提供商），另一方面您可以从Kubernetes提供的简洁的声明机制中受益。
 
-让我们现在转到一个具体的例子。
+让我们现在看一个具体的例子。
 
-# 一个激励的例子
+# 一个激动人心的例子
 
 至演示了Kubernetes原生应用程序的强大功能，让我们假设您要实现`at`- 也就是说，在给定时间[安排执行命令](http://bit.ly/2L4VqzU)。
 
