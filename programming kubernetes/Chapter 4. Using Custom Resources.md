@@ -1,12 +1,12 @@
 # 第4章使用自定义资源
 
-在 本章我们向您介绍自定义资源（CR），这是整个Kubernetes生态系统中使用的中心扩展机制之一。
+在 本章我们向您介绍自定义资源（CR），这是整个Kubernetes生态系统中使用的重要扩展机制之一。
 
-自定义资源用于小型的内部配置对象，没有任何相应的控制器逻辑 - 纯粹以声明方式定义。但是，对于希望提供Kubernetes原生API体验的Kubernetes之上的许多重要开发项目，自定义资源也发挥着核心作用。示例是服务网格，例如Istio，Linkerd 2.0和AWS App Mesh，它们都有自定义资源。
+自定义资源一般是对内部配置对象进行少量的配置声明，不包含任何控制器的逻辑 - 纯粹以声明方式定义。对于希望提供Kubernetes原生API体验的Kubernetes之上的许多重要开发项目，自定义资源发挥着核心作用。比如服务网格，如Istio，Linkerd 2.0和AWS App Mesh，它们都是采用自定义资源方式实现的。
 
-还记得[第1章中的](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#intro) “动机例子” 吗？它的核心是它有一个如下所示的CR：
+还记得[第1章中的](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#intro) “定时操作的例子” 吗？它的核心是有一个如下所示的CR：
 
-```
+```yaml
 apiVersion: cnat.programming-kubernetes.info/v1alpha1
 kind: At
 metadata:
@@ -17,18 +17,18 @@ status:
   phase: "pending"
 ```
 
-习惯自1.7版以来，每个Kubernetes集群都提供了资源。它们存储在与`etcd`主Kubernetes API资源相同的实例中，并由相同的Kubernetes API服务器提供服务。[如图4-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver)所示，请求回退到为`apiextensions-apiserver`资源提供服务的请求 通过CRD定义，如果它们不是以下两者：
+从1.7版本起，Kubernetes集群提供了自定义资源。它们与Kubernetes 标准API资源存储在相同的`etcd`实例中，并由相同的Kubernetes API服务器提供服务。[如图4-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver)所示，当自定资源类型的请求进入API服务器后，判断它们不属于以下两类请求，则请求由`apiextensions-apiserver`处理：
 
-- 由聚合的API服务器处理（参见[第8章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#ch_custom-api-servers)）。
-- 本地Kubernetes资源。
+- 由聚合的API服务器处理请求（参见[第8章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#ch_custom-api-servers)）。
+- 本地Kubernetes标准资源请求。
 
 ![Kubernetes API服务器内部的API Extensions服务器API](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0401.png)
 
 ###### 图4-1。Kubernetes API服务器内的API Extensions API服务器
 
-CustomResourceDefinition（CRD）本身就是Kubernetes资源。它描述了群集中的可用CR。对于前面的示例CR，相应的CRD如下所示：
+一个CustomResourceDefinition（CRD），本身就是Kubernetes资源。它描述了群集中的可用CR。对于上述示例的自定义资源CR，相应的自定义资源定义CRD如下所示：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -50,91 +50,91 @@ spec:
     storage: true
 ```
 
-在这种情况下，CRD的名称 - `ats.cnat.programming-kubernetes.info`必须匹配复数名称，后跟组名称。它将`At`API组中的种类CR 定义`cnat.programming-kubernetes.info`为名为的命名空间资源`ats`。
+这里，CRD的名称 - `ats.cnat.programming-kubernetes.info`必须与名称中的复数名称定义plural值完全匹配。这个被称为ats的自定义资源，它的资源类型为At，属于cnat.programming-kubernetes.info API 组，是一个命名空间下的资源。
 
 如果在群集中创建此CRD，`kubectl`将自动检测资源，用户可以通过以下方式访问它：
 
+```shell
+$ kubectl get ats
+NAME                                         CREATED AT
+ats.cnat.programming-kubernetes.info         2019-04-01T14:03:33Z
 ```
-$ kubectl得到了
-姓名创建于
-ats.cnat.programming-kubernetes.info 2019-04-01T14：03：33Z
-```
 
-# 发现信息
+# Discovery 机制
 
-背后场景，`kubectl`使用来自API服务器的发现信息来了解新资源。让我们看一下这个发现机制。
+上一个 kubectl命令获取ats资源，其背后的原理是`kubectl`通过使用来自API服务器的discovery接口来获取新资源。我们深入看一下这个discovery机制。
 
-在增加详细级别后`kubectl`，我们实际上可以看到它如何了解新的资源类型：
+通过在`kubectl`命令中设置日志的详细级别为7，我们可以看到它如何获取资源类型：
 
-```
-$ kubectl得到ats -v =7
+```shell
+$ kubectl get ats -v=7
 ... GET https://XXX.eks.amazonaws.com/apis/cnat.programming-kubernetes.info/
-                                      v1alpha1 / namespaces / cnat / ats？limit =500
-...请求标题：
-...接受：application / json ;as=表;v=v1beta1 ;g=meta.k8s.io，application / json
-      User-Agent：kubectl / v1.14.0 (darwin / amd64 )kubernetes / 641856d
-...响应状态：200以607毫秒为单位确定
-姓名年龄
-例子 - 在43s
+                                      v1alpha1/namespaces/cnat/ats?limit=500
+... Request Headers:
+... Accept: application/json;as=Table;v=v1beta1;g=meta.k8s.io,application/json
+      User-Agent: kubectl/v1.14.0 (darwin/amd64) kubernetes/641856d
+... Response Status: 200 OK in 607 milliseconds
+NAME         AGE
+example-at   43s
 ```
 
-详细的发现步骤是：
+详细的discovery步骤是：
 
-1. 最初，`kubectl`不知道`ats`。
-2. 因此，`kubectl`通过*/ apis*发现端点向API服务器询问所有现有API组。
-3. 接下来，`kubectl`通过*/ apis /group version* group发现端点向API服务器询问所有现有API组中的资源。
-4. 然后，`kubectl`将给定类型转换`ats`为以下三倍：
-   - 集团（这里`cnat.programming-kubernetes.info`）
-   - 版本（这里`v1alpha1`）
-   - 资源（这里`ats`）。
+1. 最初，`kubectl`不知道资源类型`ats`是什么。
+2. 因此，`kubectl`通过请求*/ apis*这个HTTP Path，向API服务器查询出当前所有API组。
+3. 接下来，针对上一步得到的每一个API组，`kubectl`通过请求*/ apis /group version* group，获取所有API组中包含的全部资源。
+4. 然后，`kubectl`将给定类型`ats`转换为以下三元组：
+   - 组（`cnat.programming-kubernetes.info`）
+   - 版本（`v1alpha1`）
+   - 资源（`ats`）。
 
-发现端点提供了在最后一步执行转换所需的所有信息：
+discovery 接口提供了最后一步执行转换时所需的所有信息：
 
-```
-$ http localhost：8080 / apis /
+```shell
+$ http localhost:8080/apis/
 {
-  “群组”：[{
-    “name”：“at.cnat.programming-kubernetes.info”，
-    “preferredVersion”：{
-      “groupVersion”：“cnat.programming-kubernetes.info/v1”，
-      “版本”：“v1alpha1”
+  "groups": [{
+    "name": "at.cnat.programming-kubernetes.info",
+    "preferredVersion": {
+      "groupVersion": "cnat.programming-kubernetes.info/v1",
+      "version": "v1alpha1“
     },
-    “版本”：[{
-      “groupVersion”：“cnat.programming-kubernetes.info/v1alpha1”，
-      “版本”：“v1alpha1”
+    "versions": [{
+      "groupVersion": "cnat.programming-kubernetes.info/v1alpha1",
+      "version": "v1alpha1"
     }]
   }, ...]
 }
 
-$ http localhost：8080 / apis / cnat.programming-kubernetes.info / v1alpha1
+$ http localhost:8080/apis/cnat.programming-kubernetes.info/v1alpha1
 {
-  “apiVersion”：“v1”，
-  “groupVersion”：“cnat.programming-kubernetes.info/v1alpha1”，
-  “kind”：“APIResourceList”，
-  “资源”：[{
-    “善良”：“在”，
-    “名字”：“ats”，
-    “namespaced”：是的，
-    “动词”：[“创建”，“删除”，“删除集合”，
-      “get”，“list”，“patch”，“update”，“watch”
+  "apiVersion": "v1",
+  "groupVersion": "cnat.programming-kubernetes.info/v1alpha1",
+  "kind": "APIResourceList",
+  "resources": [{
+    "kind": "At",
+    "name": "ats",
+    "namespaced": true,
+    "verbs": ["create", "delete", "deletecollection",
+      "get", "list", "patch", "update", "watch"
     ]
   }, ...]
 }
 ```
 
-这一切都是由发现实现的`RESTMapper`。我们也看到了这个非常常见的类型`RESTMapper`在[“REST映射”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)。
+这一切都是由discovery中的`RESTMapper`实现的。这个`RESTMapper`类型我们在[“REST Mapping”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)中有详细的介绍。
 
 ###### 警告
 
-该`kubectl`CLI还保持资源类型的高速缓存中的*〜/ .kubectl*，使其不必再检索每次访问发现信息。此缓存每10分钟无效。因此，CRD的更改可能会在相应用户的CLI中显示，最多10分钟后。
+`kubectl`命令为了提升执行效率，在*〜/ .kubectl*目录对资源进行了缓存，从而不必在每次调用discovery接口时都重复获取数据。此缓存失效时间为10分钟。因此，CRD如果有更改的话，通过命令行查询时，最多有10分钟的延迟。
 
 # 类型定义
 
-现在让我们更详细地看一下CRD和提供的功能：如`cnat`示例中所示，CRD是Kubernetes API服务器进程内部`apiextensions.k8s.io/v1beta1`提供的API组中的Kubernetes资源`apiextensions-apiserver`。
+现在让我们更详细地看一下CRD和及其功能：如`cnat`示例中所示，CRD资源在Kubernetes API服务器内是属于`apiextensions.k8s.io/v1beta1`这个API组，是由`apiextensions-apiserver`进程提供服务。
 
-CRD的架构如下所示：
+CRD的结构如下所示：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -167,11 +167,11 @@ spec:
   - ...
 ```
 
-许多字段是可选的或默认的。我们将在以下部分中更详细地解释这些字段。
+可以看到许多字段是可选的或默认的。我们将在以下部分中更详细地解释这些字段。
 
-后创建一个CRD对象，`apiextensions-apiserver`内部`kube-apiserver`将检查名称并确定它们是否与其他资源冲突或者它们本身是否一致。片刻之后，它会将结果报告给CRD的状态，例如：
+在一个CRD对象被创建后，`kube-apiserver`内部的`apiextensions-apiserver`将检查其名称并确定是否与其他资源冲突或者它本身的字段属性是否合法。检测之后，检测结果会在CRD的状态字段中体现，例如：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -229,12 +229,12 @@ status:
     - v1alpha1
 ```
 
-您可以看到规范中缺少的名称字段是默认的，并在状态中反映为可接受的名称。此外，还设置了以下条件：
+您可以看到spec定义中未设置值的字段是取默认值，并在状态中反映为可接受的名称。此外，还设置了以下条件：
 
-- `NamesAccepted` 描述规范中给定的名称是否一致且没有冲突。
-- `Established`描述API服务器在名称下提供给定资源`status.acceptedNames`。
+- `NamesAccepted` 描述了spec中给定的名称是否一致且没有冲突。
+- `Established`描述了API服务器可以为在`status.acceptedNames`下定义的资源提供服务，状态“True”时表示正常提供服务。
 
-请注意，在创建CRD后很长时间内可以更改某些字段。例如，您可以添加短名称或列。在这种情况下，可以建立CRD，即使用旧名称提供 - 尽管规范名称存在冲突。因此，`NamesAccepted`条件将是错误的，规范名称和接受的名称将不同。
+请注意，在创建CRD后，例如API服务器已经可以正常给这个CRD资源提供Restful服务，这时也可以更改CRD中的某些字段。例如，您可以添加名称缩写或列信息。在这种情况下，尽管spec存在冲突，但CRD的established状态为True，会使用旧名称提供服务 。再看`NamesAccepted`这个条件的状态将是False的，表示spec名称和已经接受（提供服务）的名称是不同的。
 
 # 自定义资源的高级功能
 
@@ -242,19 +242,19 @@ status:
 
 ## 验证自定义资源
 
-CR的可以在创建和更新期间由API服务器进行验证。这是基于CRD规范中的字段中指定的[OpenAPI v3架构](http://bit.ly/2RqtN5i)完成的`validation`。
+API服务器可以在CR被创建和更新时进行验证。在OpenAPI v3 scheme](http://bit.ly/2RqtN5i)中定义了可以别验证的CRD字段。
 
-当请求创建或改变CR时，规范中的JSON对象将根据此规范进行验证，如果出现错误，则会在HTTP代码`400`响应中将冲突字段返回给用户。[图4-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver-validation)显示了在...内的请求处理程序中进行验证的位置`apiextensions-apiserver`。
+每当请求创建或修改一个CR对象时，会将JSON对象与spec中字段根据此规范进行验证，如果出现错误，则会返回给用户一个在HTTP代码`400`响应，正文返回冲突字段。[图4-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver-validation)显示了在`apiextensions-apiserver`内处理程序对请求进行验证的流程。
 
-可以在验证准入webhooks中实现更复杂的验证 - 即，使用图灵完整的编程语言。[图4-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver-validation)显示了在本节中描述的基于OpenAPI的验证之后直接调用这些webhook。在[“Admission Webhooks”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch09.html#admission-webhooks)，我们将看到如何实施和部署入场webhook。在那里，我们将研究将其他资源考虑在内的验证，因此远远超出OpenAPI v3验证。幸运的是，对于许多用例，OpenAPI v3模式就足够了。
+可以在验证相关的admission webhooks中实现更复杂的验证。[图4-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#apiextensions-apiserver-validation)显示了在本节中描述的基于OpenAPI的验证之后直接调用这些webhook。在[“Admission Webhooks”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch09.html#admission-webhooks)，我们将看到如何实施和部署admission webhook。到时，我们将研究将结合其他资源在内一起完成验证的过程，那将远超出OpenAPI v3验证。幸运的是，对于许多场景来说，OpenAPI v3模式就足够了。
 
 ![验证步骤在`apiextensions-apiserver`的处理程序堆栈中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0402.png)
 
-###### 图4-2。apiextensions-apiserver的处理程序堆栈中的验证步骤
+###### 图4-2。apiextensions-apiserver的处理程序流程中的验证步骤
 
-该OpenAPI模式语言基于[JSON Schema标准](http://bit.ly/2J7aIT7)，该[标准](http://bit.ly/2J7aIT7)使用JSON / YAML本身来表示模式。这是一个例子：
+该OpenAPI语言基于[JSON Schema标准](http://bit.ly/2J7aIT7)，该[标准](http://bit.ly/2J7aIT7)使用JSON / YAML本身来表示。下面一个例子：
 
-```
+```yaml
 type: object
 properties:
   apiVersion:
@@ -286,49 +286,49 @@ required:
 - spec
 ```
 
-此模式指定该值实际上是JSON对象; [1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#idm46336863073336)即，它是一个字符串映射，而不是一个切片或一个像数字的值。此外，它具有（除了`metadata`，`kind`，和`apiVersion`，其中隐式地定制资源定义的）两个附加属性：`spec`和`status`。
+这个值实际上是JSON对象; [1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#idm46336863073336)即，它是一个字符串map，而不是一个列表或一个数值。此外，它有（除了`metadata`，`kind`，和`apiVersion`，作为描述资源的元数据）两个额外属性：`spec`和`status`。
 
-每个都是JSON对象。`spec`有需要的领域`schedule`和`command`，这两者都是字符串。`schedule`必须匹配ISO日期的模式（在这里用一些正则表达式勾画）。optional `status`属性有一个名为的字符串字段`phase`。
+这两个属性也都是JSON对象。`spec`有需要的业务属性`schedule`和`command`，这两者都是字符串。`schedule`必须匹配ISO日期的模式（在这里用正则表达式描述）。可选的 `status`属性有一个名为`phase`的字符串字段。
 
 ##### OPENAPI V3架构，完整性及其未来
 
-OpenAPI v3模式曾经是CRD中的可选模式。在Kubernetes 1.14之前，它们仅用于服务器端验证。为此目的，它们也可能是不完整的 - 换句话说，它们可能没有指定所有字段。
+OpenAPI v3模式曾经是CRD中的可选模式。在Kubernetes 1.14之前，它们仅用于服务器端验证。从这个角度看，它们可能是不完整的 - 换句话说，它们可能没有指定所有字段。
 
-从Kubernetes 1.15开始，CRD模式将作为Kubernetes API服务器OpenAPI规范的一部分发布。这个特别`kubectl`用于客户端验证。客户端验证会抱怨未知字段。例如，当用户键入`foo:bar`对象并且OpenAPI架构未指定时`foo`，`kubectl`将拒绝该对象。因此，优良作法是传递完整的OpenAPI模式。
+从Kubernetes 1.15开始，CRD schema定义将作为Kubernetes API服务器OpenAPI规范的一部分发布。这个也将被`kubectl`用于客户端验证。客户端验证会遇到未知字段会报错。例如，当用户键入`foo:bar`对象并且OpenAPI schema未验证通过`foo`时，`kubectl`将拒绝对该对象的操作。因此，需要使用完整的OpenAPI schema 定义。
 
-最后，[将来将修剪自定义资源实例](http://bit.ly/2WY8lKY)。这意味着 - 类似于本地Kubernetes资源类型的pod-未知（未指定）字段将不会被持久化。这不仅对数据一致性很重要，而且对安全性也很重要。这是CRD的OpenAPI模式应该完整的另一个原因。
+最后，[将来会修订自定义资源实例](http://bit.ly/2WY8lKY)。这意味着 - 类似于本地Kubernetes资源类型的pod-未知（未指定）字段将不会被持久化。这不仅对数据一致性很重要，而且对安全性也很重要。这也是CRD的OpenAPI schema应该完整的另一个原因。
 
-有关完整参考，请参阅[OpenAPI v3架构文档](http://bit.ly/2RqtN5i)。
+有关完整参考，请参阅[OpenAPI v3 schema文档](http://bit.ly/2RqtN5i)。
 
-手动创建OpenAPI模式可能很乏味。幸运的是，正在进行的工作是通过代码生成使这更容易：Kubebuilder项目 - 参见[“Kubebuilder”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#kubebuilder) - 已[`crd-gen`在*sig.k8s.io/controller-tools中*](http://bit.ly/2J00kvi)开发，并且这是逐步扩展的，以便它可以在其他地方使用上下文。发电机[`crd-schema-gen`](http://bit.ly/31N0eQf)是`crd-gen`这个方向的叉子。
+手动创建OpenAPI schema可能很繁琐。幸运的是，正在进行中的代码生成器工作会使这类需求方便的实现：Kubebuilder项目（ 参见这里[“Kubebuilder”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#kubebuilder)）已经在[*sig.k8s.io/controller-tools中*](http://bit.ly/2J00kvi)开发了`crd-gen`，并在逐渐扩展和丰富，以便它可以在其他地方使用。[crd-schema-gen`](http://bit.ly/31N0eQf)fork自`crd-gen`，是代码生成schema的一个项目。
 
-## 短名称和类别
+## 缩写名称和分类
 
-喜欢本机资源，自定义资源可能具有长资源名称。它们在API级别上很棒，但在CLI中输入很繁琐。CR也可以有短名称，就像`daemonsets`可以查询的本机资源一样`kubectl get ds`。这些短名称也称为别名，每个资源可以包含任意数量的别名。
+正如标准资源，自定义资源可能具有长资源名称。它们在API级别上很棒，但在CLI中输入很繁琐。CR也可以有短名称，就像`daemonsets`可以查询的本机资源一样`kubectl get ds`。这些缩写名称也称为别名，每个资源可以包含任意数量的别名。
 
-至查看所有可用的短名称，使用如下`kubectl api-resources`命令：
+查看所有可用的别名，使用如下`kubectl api-resources`命令：
 
-```
+```shell
 $ kubectl api-resources
-NAME SHORTNAMES APIGROUP NAMESPACED KIND
-绑定                                     true        绑定
-componentstatuses cs                    false       ComponentStatus
-configmaps cm                    true        ConfigMap
-端点ep                    true        端点
-事件ev                    true        事件
-limitranges限制                true        LimitRange
-名称空间ns                    false       命名空间
-节点没有                    false       节点
-persistentvolumeclaims pvc                   true       PersistentVolumeClaim
-persistentvolumes pv                    false       PersistentVolume
-pods po                    true        pod
-statefulsets sts apps      true        StatefulSet
+NAME                   SHORTNAMES  APIGROUP NAMESPACED  KIND
+bindings                                    true        Binding
+componentstatuses      cs                   false       ComponentStatus
+configmaps             cm                   true        ConfigMap
+endpoints              ep                   true        Endpoints
+events                 ev                   true        Event
+limitranges            limits               true        LimitRange
+namespaces             ns                   false       Namespace
+nodes                  no                   false       Node
+persistentvolumeclaims pvc                  true       PersistentVolumeClaim
+persistentvolumes      pv                   false       PersistentVolume
+pods                   po                   true        Pod
+statefulsets           sts         apps     true        StatefulSet
 ...
 ```
 
-再次，`kubectl`了解短名称通过发现信息（参见[“发现信息”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#discovery)）。这是一个例子：
+`kubectl`获取别名也是通过discovery 接口（参见[“Discovery Information”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#discovery)）。请看下面例子：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -339,13 +339,13 @@ spec:
   - at
 ```
 
-之后，a `kubectl get at`将列出`cnat`命名空间中的所有CR。
+接下来， `kubectl get at`命令将列出默认命名空间中的所有`cnat` 的CR实例。
 
-此外，CR-与任何其他资源一样 - 可以是其中的一部分类别。最常见的用途是`all`类别，如`kubectl get all`。它列出了群集中所有面向用户的资源，如pod和服务。
+另外，CR-与任何其他资源一样 - 都是属于分类的一部分。当我们使用all`分类，如`kubectl get all。它将列出集群中所有用户可用的资源，如pod和service。
 
-群集中定义的CR可以通过以下`categories`字段加入类别或创建自己的类别：
+集群中自定义的CR可以通过设置以下`categories`字段加入已有分类或创建自己的分类：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -356,15 +356,15 @@ spec:
   - all
 ```
 
-有了这个，`kubectl get all`还会`cnat`在命名空间中列出CR。
+这个设置分为all，`kubectl get all`命令也会在命名空间中列出自定义资源`cnat` 的CR实例。
 
-## 打印机列
+## 打印列
 
-该`kubectl`CLI工具使用服务器端打印来呈现输出`kubectl get`。这意味着它向API服务器查询要显示的列以及每行中的值。
+`kubectl`命令行工具使用服务器端来组织`kubectl get` 查询到的打印输出内容。这意味着API服务器在查询返回中渲染好需要显示的列以及每行中的值。
 
-自定义资源也支持服务器端打印机列`additionalPrinterColumns`。它们被称为“附加”，因为第一列始终是对象的名称。这些列的定义如下：
+自定义资源通过`additionalPrinterColumns`字段，支持对服务器端定义所需打印的列信息。之所以被称为“额外”，因为第一列始终是对象的名称。列定义如下：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
@@ -379,15 +379,15 @@ spec:
     JSONPath: JSON path inside the CR for the displayed value
 ```
 
-该`name`字段是列名，`type`是规范的[数据类型](http://bit.ly/2N0DSY4)部分中定义的OpenAPI类型，并且`format`（在同一文档中定义）是可选的，可能由`kubectl`其他客户端解释。
+该`name`字段是列名，`type`是OpenAPI schema规范中[数据类型](http://bit.ly/2N0DSY4)部定义的一种，并且`format`（定义同上）是可选的，可以被用于`kubectl`或其他客户端来使用。
 
-此外，`description`是一个可选的人类可读字符串，用于文档目的。显示列的`priority`详细模式的控件`kubectl`。在撰写本文时（使用Kubernetes 1.14），仅支持零，并且隐藏所有具有更高优先级的列。
+此外，`description`是一个可选的供使用者查看的字符串。`priority`字段用于kubectl控制显示细节。在撰写本文时（使用Kubernetes 1.14），目前仅支持零，其他具有更高优先级的列将不被显示。
 
-最后，`JSONPath`定义要显示的值。它是CR内部的简单JSON路径。这里，“简单”意味着它支持对象字段语法`.spec.foo.bar`，但不支持循环遍历数组或类似的更复杂的JSON路径。
+最后，`JSONPath`定义要显示的值。它描述CR内部的简单JSON路径。这里，“简单”意味着它支持对象属性的语法`.spec.foo.bar`，但不支持循环遍历数组或类似的更复杂用法来描述的JSON路径。
 
-有了这个，引言中的示例CRD可以`additionalPrinterColumns`像这样扩展：
+了解这些概念，我们看看示例CRD的 `additionalPrinterColumns`定义：
 
-```
+```yaml
 additionalPrinterColumns: #(optional)
 - name: schedule
   type: string
@@ -400,19 +400,19 @@ additionalPrinterColumns: #(optional)
   JSONPath: .status.phase
 ```
 
-然后`kubectl`将呈现`cnat`如下资源：
+`kubectl` get 操作将得到如下`cnat`资源：
 
-```
-$ kubectl得到了
-名称SCHEDULER命令阶段
-foo 2019-07-03T02：00：00Z   echo "hello world"  待定
+```shell
+$ kubectl get ats
+NAME  SCHEDULER             COMMAND             PHASE
+foo   2019-07-03T02:00:00Z  echo "hello world"  Pending
 ```
 
 接下来，我们来看看子资源。
 
 ## 子资源
 
-我们简要提到了[“Status Subresources：UpdateStatus”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#client-go-subresource)中的子资源。子资源是特殊的HTTP端点，使用附加到普通资源的HTTP路径的后缀。例如，pod标准HTTP路径是*/ api / v1 / namespace / namespace/ pods /name*。Pod有许多子资源，例如*/ logs*，*/ portforward*，*/ exec*和*/ status*。相应的子资源HTTP路径是：
+我们在[“Status Subresources：UpdateStatus”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#client-go-subresource)提到了子资源。子资源是特殊的HTTP 方法，使用附加到普通资源的HTTP路径的后缀。例如，pod标准HTTP路径是*/ api / v1 / namespace / namespace/ pods /name*。Pod有许多子资源，例如*/ logs*，*/ portforward*，*/ exec*和*/ status*。相应的子资源HTTP路径是：
 
 - */ api / v1 / namespace /* `namespace`*/ pods /* `name`*/ logs*
 - */ api / v1 / namespace /* `namespace`*/ pods /* `name`*/ portforward*
@@ -421,18 +421,18 @@ foo 2019-07-03T02：00：00Z   echo "hello world"  待定
 
 子资源端点使用与主资源端点不同的协议。
 
-在撰写本文时，自定义资源支持两个子资源：*/ scale*和*/ status*。两者都是选择性的，即必须在CRD中明确启用它们。
+在撰写本文时，自定义资源支持两个子资源：*/ scale*和*/ status*。两者都是可选的，即必须在CRD中明确启用它们。
 
 ### 状态子资源
 
-该*/状态*子资源用于从控制器提供的状态中拆分用户提供的CR实例规范。这样做的主要动机是特权分离：
+该*/status*子资源用于将CR实例中由控制器管控的状态和用户管控的spec分区开来。这样做的主要目的是控制权分离：
 
 - 用户通常不应该写状态字段。
-- 控制器不应写入规范字段。
+- 控制器不应写入spec字段。
 
-该用于访问控制的RBAC机制不允许在该详细级别上的规则。这些规则始终是每个资源。该*/状态*子资源通过提供两个端点是自己的资源解决这个问题。每个都可以独立地使用RBAC规则进行控制。这通常称为*规范状态拆分*。以下是`ats`资源的此类规则的示例，该规则仅适用于*/ status*子资源（同时`"ats"`与主资源匹配）：
+用于访问控制的RBAC机制目前达不到这么详细地级别。这些规则始终是针对每个资源来说的。该*/status*子资源通过提供两个不同的HTTP path来解决这个问题。每个都可以独立地使用RBAC规则进行控制。这通常称为*spec-status拆分*。以下是以`ats`资源为例，该规则适用于*/ status*子资源（同时`"ats"`与主资源匹配）：
 
-```
+```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: ...
@@ -442,19 +442,19 @@ rules:
   verbs: ["update", "patch"]
 ```
 
-具有*/ status*子资源的资源（包括自定义资源）已更改语义，也适用于主资源端点：
+包含*/ status*子资源的资源（包括自定义资源）语义和之前有所不同，这里它既是一个子资源也代表了主资源：
 
-- 它们忽略在创建期间对主HTTP端点上的状态的更改（在创建期间刚刚删除状态）和更新。
-- 同样，*/ status*子资源端点忽略有效负载状态之外的更改。无法在*/ status*端点上创建操作。
-- 每当外部`metadata`和外部的`status`变化（这尤其意味着规范的变化）时，主资源端点将增加该`metadata.generation`值。这可以用作控制器的触发器，指示用户期望已经改变。
+- 在对主资源对应的HTTP方法进行调用时，它会忽略status中的属性内容。（例如创建和更新时）
+- 同样，调用*/ status*子资源对应的HTTP方法时，只有status中的内容会起作用，其他信息将被忽略。另外，对于*/ status* 执行创建操作也是无效的。
+- 每当改变非`metadata`和非`status`的内容时（即改变spec的内容），对主资源对应的HTTP方法调用，会将`metadata.generation`值增加。这将给控制器的一个信号，代表用户改变了spec的内容。
 
-注意通常都`spec`和`status`在更新请求被发送，但在技术上你可以留出一个请求负载相应的另一个部分。
+注意，通常`spec`和`status`在更新请求时两部分内容都会提供，不过从技术角度说，提供其中一个就足够了。
 
-另请注意，*/ status*端点将忽略*状态*之外的所有内容，包括标签或注释等元数据更改。
+另请注意，对*/ status*子资源操作时，将忽略*状态*之外的所有其他内容更改，包括标签或注释等元数据。
 
-自定义资源的规范状态拆分启用如下：
+启用自定义资源的spec-status状态，按照如下设置：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 spec:
@@ -463,22 +463,23 @@ spec:
   ...
 ```
 
-请注意`status`，YAML片段中的字段被分配了空对象。这是设置没有其他属性的字段的方法。只是写作
+注意`status`，在以上YAML片段中的字段被分配了空对象。如果将status写作：
 
-```
+```yaml
 subresources:
   status:
 ```
 
-将导致验证错误，因为在YAML中，结果是`null`值`status`。
+将导致验证错误，因为在YAML中，这样写的结果将给`status赋`null`值`，而null 将验证不通过。
 
 ###### 警告
 
-启用规范状态拆分是API的重大变化。旧控制器将写入主端点。他们不会注意到从激活分割的位置始终忽略状态。同样，在激活拆分之前，新控制器无法写入新的*/状态*端点。
+启用spec-status拆分是一个非兼容性的API变化。旧的控制器将写入主资源对应的HTTP
+方法。一旦拆分启用，他们不会意识到status内容将被忽略。同样，在拆分之前，新的控制器无法写入新的*/status*子资源对应的HTPP方法。
 
-在Kubernetes 1.13及更高版本中，可以为每个版本配置子资源。这允许我们引入*/ status*子资源而不会发生重大变化：
+在Kubernetes 1.13及更高版本中，可以为每个版本配置子资源。这允许我们以兼容方式引入*/ status*子资源：
 
-```
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 spec:
@@ -493,22 +494,25 @@ spec:
       status: {}
 ```
 
-这将启用*/ status*子资源`v1beta1`，但不能用于`v1alpha1`。
+这将对`v1beta1`版本启用*/ status*子资源，但不能用于`v1alpha1`。
 
 ###### 注意
 
-乐观并发语义（参见[“乐观并发”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#optimistic-concurrency)）与主要资源端点相同; 也就是说，`status`并且`spec`共享相同的资源版本计数器和*/状态*更新可能由于写入主资源而发生冲突，反之亦然。换句话说，存储层上没有分割`spec`和分割`status`。
+从Kubernetes的乐观并发锁机制来看（参见[“乐观并发”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#optimistic-concurrency)）与主资源相同，对于子资源的并发操作也需要参看resource version 字段，也就是说，`status`并且`spec`共享相同的resource version计数器，*/status*更新可能与写入主资源操作冲突，反之亦然。换句话说，存储层上没有分割`spec`和分割`status`。
 
-### 扩展子资源
+### 扩缩子资源
 
-该可用于自定义资源的第二个子资源是*/ scale*。的*/尺度*子资源为（投影）[2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#idm46336862332104)上的资源视图，使我们能够查看和修改仅复制值。这个 subresource以Kubernetes中的部署和副本集等资源而闻名，显然可以扩展和缩小。
+可用于自定义资源的第二个子资源是*/ scale*。*/scale*子资源可以看做是主资源的视图（投影）[2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#idm46336862332104)，我们只需要查看和修改副本值即可，其他值不需要关心。这个 subresource以Kubernetes中的部署和副本集等资源而闻名，显然可以扩容和缩容。
 
-该`kubectl scale`命令使用*/ scale*子资源; 例如，以下内容将修改给定实例中的指定副本值：
+`kubectl scale`命令使用*/ scale*子资源; 例如，以下内容将修改给定实例中的指定副本值：
 
-```
+```shell
 $ kubectl scale --replicas=3 your-custom-resource -v=7
 I0429 21:17:53.138353   66743 round_trippers.go:383] PUT
 https://host/apis/group/v1/your-custom-resource/scale
+```
+
+```yaml
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 spec:
@@ -520,21 +524,21 @@ spec:
   ...
 ```
 
-这样，`spec.replicas`在a期间，将副本值的更新写入并从那里返回`GET`。
+kubectl命令将更新，`spec.replicas`所代表的副本值，之后返回。
 
-标签选择器不能通过*/ status*子资源更改，只能读取。其目的是为控制器提供计算相应对象的信息。例如，`ReplicaSet`控制器计算满足此选择器的相应pod。
+*/ status*子资源中使用标签选择器时，不能对标签选择器本身的值进行修改，只能读取。这里标签选择器的目的只是用来作为条件查找目标对象的。例如，`ReplicaSet`控制器计算满足此选择器的相应pod。
 
-标签选择器是可选的。如果您的自定义资源语义不适合标签选择器，则不要为其指定JSON路径。
+标签选择器是可选的。如果您的自定义资源语义不适合标签选择器，就不要为其指定JSON路径。
 
-在前面`kubectl scale --replicas=3 ...`的值示例`3`写入`spec.replicas`。当然，可以使用任何其他简单的JSON路径; 例如，`spec.instances`或者`spec.size`是一个合理的字段名称，具体取决于上下文。
+在前面`kubectl scale --replicas=3 ...`的示例值`3`写入`spec.replicas`。当然，可以使用任何其他简单的JSON路径; 例如，`spec.instances`或者`spec.size`，根据实际情况也可以这样写。
 
 ##### 副本整数值与创建和删除副本的控制器
 
-我们只讨论在自定义资源中读取和设置副本整数值。其背后的实际语义 - 例如，创建和删除实际副本的实例 - 必须由自定义控制器实现（请参阅[“控制器和操作员”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#ch_controllers-operators)）。
+我们讨论了在自定义资源中读取和设置副本值。实际上真正的删除或创建操作，必须由自定义控制器实现（请参阅[“控制器和operator”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#ch_controllers-operators)）。
 
-从端点读取或写入的对象类型`Scale`来自`autoscaling/v1`API组。这是它的样子：
+`Scale`定义在`autoscaling/v1`API组。这是它的结构：
 
-```
+```go
 type Scale struct {
     metav1.TypeMeta `json:",inline"`
     // Standard object metadata; More info: https://git.k8s.io/
@@ -575,9 +579,9 @@ type ScaleStatus struct {
 }
 ```
 
-实例将如下所示：
+实例化后将如下所示：
 
-```
+```yaml
 metadata:
   name: cr-name
   namespace: cr-namespace
@@ -591,18 +595,18 @@ spec:
     selector: "environment = production"
 ```
 
-请注意，主要资源和*/ scale*子资源的乐观并发语义相同。也就是说，主要资源写入可能与*/ scale*写入冲突，反之亦然。
+请注意，主资源和*/ scale*子资源的乐观并发锁机制相同。也就是说，对主资源写入可能与*/ scale*写入冲突，反之亦然。
 
-# 开发人员对自定义资源的看法
+# 从开发视角看自定义资源
 
-自定义资源可以使用许多客户端从Golang访问。我们将专注于：
+可以使用许多Golang实现的客户端访问自定义资源。我们将关注于：
 
 - 使用`client-go`动态客户端（请参阅[“动态客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#dynamic-client)）
-- 使用键入的客户端：
-  - 由[kubernetes-sigs / controller-runtime提供](http://bit.ly/2ZFtDKd)，并由Operator SDK和Kubebuilder使用（请参阅[“](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#controller-runtime)Operator SDK和Kubebuilder的[控制器 - 运行时客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#controller-runtime)）
-  - 正如[*k8s.io/client-go/kubernetes中*](http://bit.ly/2FnmGWA)所生成的`client-gen`那样（参见[“通过client-gen创建的类型客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)）
+- 使用typed客户端：
+  - 由[kubernetes-sigs / controller-runtime提供](http://bit.ly/2ZFtDKd)，被Operator SDK和Kubebuilder使用( [“controller-runtime Client of Operator SDK and Kubebuilder”](https://learning.oreilly.com/library/view/Programming+Kubernetes/9781492047094/ch04.html#controller-runtime))
+  - 如 [*k8s.io/client-go/kubernetes中*](http://bit.ly/2FnmGWA)`使用client-gen`生成的那样（参见[“通过client-gen创建的类型客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)）
 
-选择使用哪个客户端主要取决于要编写的代码的上下文，尤其是实现的逻辑和要求的复杂性（例如，动态和支持在编译时未知的GVK）。
+具体选择使用哪个客户端主要取决于要编写代码时的考虑，尤其需求逻辑和实现的复杂性（例如，支持动态特性和支持在编译时未知的GVK）。
 
 前面的客户列表：
 
@@ -612,11 +616,11 @@ spec:
 
 ## 动态客户端
 
-该[*k8s.io/client-go/dynamic中的*](http://bit.ly/2Y6eeSK)动态客户端与已知的GVK完全无关。除了[*unstructured.Unstructured之外*](http://bit.ly/2WYZ6oS)，它甚至不使用任何Go类型，它包含just `json.Unmarshal`和它的输出。
+在[*k8s.io/client-go/dynamic中的*](http://bit.ly/2Y6eeSK)动态客户端是与GVK无关的。除了[*unstructured.Unstructured之外*](http://bit.ly/2WYZ6oS)，它甚至不使用任何Go类型，它只包装了 `json.Unmarshal`和它的输出。
 
-动态客户端既不使用方案也不使用RESTMapper。这意味着开发人员必须通过以GVR的形式提供资源（请参阅[“资源”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#resources)）来手动提供有关类型的所有知识：
+动态客户端既不使用scheme也不使用RESTMapper。这意味着开发人员必须通过以GVR的形式提供资源（请参阅[“资源”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#resources)）来手动指定有关的三元组数据：
 
-```
+```go
 schema.GroupVersionResource{
   Group: "apps",
   Version: "v1",
@@ -624,15 +628,15 @@ schema.GroupVersionResource{
 }
 ```
 
-如果可以使用REST客户端配置（请参阅[“创建和使用客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)），可以在一行中创建动态客户端：
+如果可以使用REST config（请参阅[“创建和使用客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)），可以在一行中创建动态客户端：
 
-```
+```go
 client, err := NewForConfig(cfg)
 ```
 
 对给定GVR的REST访问非常简单：
 
-```
+```go
 client.Resource(gvr).
    Namespace(namespace).Get("foo", metav1.GetOptions{})
 ```
@@ -643,30 +647,30 @@ client.Resource(gvr).
 
 您必须知道资源的范围（即，它是命名空间还是集群作用域）。集群范围的资源只是忽略了`Namespace(namespace)`调用。
 
-动态客户端的输入和输出`*unstructured.Unstructured`是一个对象，它包含`json.Unmarshal`在解组时输出的相同数据结构：
+动态客户端的输入和输出`*unstructured.Unstructured`是一个对象，它与`json.Unmarshal`在解析对象时输出的数据结构相同，其内部主要包含以下结构：
 
 - 对象用表示`map[string]interface{}`。
 - 数组表示为`[]interface{}`。
 - 原始类型`string`，`bool`，`float64`，或`int64`。
 
-该方法`UnstructuredContent()`提供对非结构化对象内部的数据结构的访问（我们也可以访问`Unstructured.Object`）。在同一个包中有助手可以轻松检索字段并可以对对象进行操作 - 例如：
+方法`UnstructuredContent()`提供对非结构化对象内部的数据结构的访问（我们也可以访问`Unstructured.Object`）。在包中有一些帮助方法，可以从对象中方便的检索字段 - 例如：
 
-```
+```go
 name, found, err := unstructured.NestedString(u.Object, "metadata", "name")
 ```
 
-`"foo"`在这种情况下返回部署的名称。`found`如果实际找到该字段（不仅是空的，而是实际存在的），则为真。`err`报告现有字段的类型是否是意外的（即，在这种情况下不是字符串）。其他助手是通用助手，一次是结果的深层副本，一次是没有：
+这行代码将返回deployment的名称`"foo"`。如果实际找到该字段（不为空的的值），`found`值为true。`err`代表可能的异常发生（如，这个例子中，如果不是字符串）。其他是一些通用的帮助方法，Copy结尾的返回原始对象的深拷贝，NoCopy不是深拷贝：
 
-```
+```go
 func NestedFieldCopy(obj map[string]interface{}, fields ...string)
   (interface{}, bool, error)
 func NestedFieldNoCopy(obj map[string]interface{}, fields ...string)
   (interface{}, bool, error)
 ```
 
-还有其他类型的变体进行类型转换，如果失败则返回错误：
+还有一些针对不同类型的类型转换方法，如果失败则返回错误：
 
-```
+```go
 func NestedBool(obj map[string]interface{}, fields ...string) (bool, bool, error)
 func NestedFloat64(obj map[string]interface{}, fields ...string)
   (float64, bool, error)
@@ -679,33 +683,33 @@ func NestedStringMap(obj map[string]interface{}, fields ...string)
   (map[string]string, bool, error)
 ```
 
-最后一个通用的setter：
+最后是一个通用的setter方法：
 
-```
+```go
 func SetNestedField(obj, value, path...)
 ```
 
-动态客户端在Kubernetes中用于通用控制器，如垃圾收集控制器，它删除父项已消失的对象。垃圾收集控制器可以与系统中的任何资源一起使用，因此可以广泛使用动态客户端。
+动态客户端在Kubernetes中用于通用控制器，如垃圾回收控制器，它删除父项已消失的对象。垃圾回收控制器可以与系统中的任何资源一起使用，因此可以广泛使用动态客户端。
 
-## 键入的客户端
+## 类型化的客户端
 
-键入的客户端不要使用`map[string]interface{}`类似的通用数据结构，而是使用真实的Golang类型，每个GVK都不同且具体。它们更易于使用，大大提高了类型安全性，并使代码更简洁，更易读。缺点是，它们的灵活性较低，因为必须在编译时知道已处理的类型，并生成这些客户端，这会增加复杂性。
+类型化的客户端不使用`map[string]interface{}`类似的通用数据结构，而是使用真实的Golang类型，每个GVK都有对应的Golang类型。它们更易于使用，大大提高了类型安全性，并使代码更简洁，更易读。缺点是，它们的灵活性较低，因为必须在编译时知道已有的类型，并生成这些客户端，这会增加复杂性。
 
-在进入类型化客户端的两个实现之前，让我们看看Golang类型系统中各种类型的表示（有关Kubernetes类型系统背后的理论，请参阅[“深度API机械”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#api-machinery-core)）。
+在进入类型化客户端的两个实现之前，让我们看看Golang类型系统中各种类型的表示（有关Kubernetes类型系统背后的理论，请参阅[“深入API Machinery”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#api-machinery-core)）。
 
-### 一种类型的解剖
+### 一个类型的构成
 
-种表示为Golang结构。通常结构被命名为类型（虽然从技术上讲它不必是），并且被放置在与手头的GVK的组和版本相对应的包中。常见的惯例是放置GVK *group*/ *version*。*Kind*进入Go包：
+一个资源类型对应于Golang的结构体。通常结构体和资源类型是同名的，只不过名称采用驼峰方式命名（虽然从技术上讲它不必是），并且被放置在与这个GVK的组和版本相对应的包中。常见的惯例是把这个GVK 放到类似*group*/ *version*.*Kind* 层次的Go包中：
 
-```
+```go
 pkg / apis / group / version
 ```
 
-并*Kind*在文件*types.go中*定义Golang结构。
+名为*Kind* Golang结构体被定义在文件*types.go中*。
 
-对应于GVK的每个Golang类型都嵌入`TypeMeta`了包[*k8s.io/apimachinery/pkg/apis/meta/v1中*](http://bit.ly/2Y5HdWT)的结构。`TypeMeta`只包括`Kind`和`ApiVersion`字段：
+对应于GVK的每个Golang类型内都嵌入`TypeMeta`结构（来自于包[*k8s.io/apimachinery/pkg/apis/meta/v1中*](http://bit.ly/2Y5HdWT)）。`TypeMeta`包括`Kind`和`ApiVersion`两个字段：
 
-```
+```go
 type TypeMeta struct {
     // +optional
     APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
@@ -714,9 +718,9 @@ type TypeMeta struct {
 }
 ```
 
-此外，每个顶级类型 - 即具有自己的端点并因此具有一个（或多个）对应的GVR（参见[“REST映射”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)） - 具有存储名称，命名空间资源的命名空间和漂亮的类型。大量进一步的元级域。所有这些都存储在[*k8s.io/apimachinery/pkg/apis/meta/v1*](http://bit.ly/2XSt8eo)`ObjectMeta`包中调用的结构中：
+此外，每个顶级的资源类型（ 就是指具有自己的HTTP Restful访问方法的资源，它可能对应一个或多个GVR（参见[“REST Mapping”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)） ） 具有存储名称，属于命名空间作用域的资源拥有命名空间以及元数据相关的字段。所有这些构成了Golang结构体`ObjectMeta`，存储在在[*k8s.io/apimachinery/pkg/apis/meta/v1*](http://bit.ly/2XSt8eo)包中：
 
-```
+```go
 type ObjectMeta struct {
     Name string `json:"name,omitempty"`
     Namespace string `json:"namespace,omitempty"`
@@ -730,11 +734,11 @@ type ObjectMeta struct {
 }
 ```
 
-还有许多其他字段。我们强烈建议您阅读[大量的内联文档](http://bit.ly/2IutNyh)，因为它可以很好地描述Kubernetes对象的核心功能。
+除此之外，还有许多其他字段。我们强烈建议您阅读 [extensive inline documentation](http://bit.ly/2IutNyh)，这里描述了Kubernetes对象的核心功能。
 
-Kubernetes顶级类型（即那些具有嵌入式`TypeMeta`和嵌入式`ObjectMeta`，并且在这种情况下持久化的类型`etcd`）看起来非常相似，因为它们通常具有a `spec`和a `status`。从[*k8s.io/kubernetes/apps/v1/types.go*](http://bit.ly/2RroTFb)查看此部署[*示例*](http://bit.ly/2RroTFb)：
+Kubernetes顶级类型（即那些嵌入了TypeMeta和ObjectMeta，被持久化在etcd中的类型`）它们之间看起来非常相似，因为它们通常都有 `spec和status字段。看一下[*k8s.io/kubernetes/apps/v1/types.go*](http://bit.ly/2RroTFb)中deployment的例子：
 
-```
+```go
 type Deployment struct {
     metav1.TypeMeta `json:",inline"`
     metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -744,15 +748,15 @@ type Deployment struct {
 }
 ```
 
-虽然不同类型的类型的实际内容`spec`和`status`不同类型之间存在显着差异，但这在Kubernetes中分为`spec`并且`status`是一个共同主题甚至是惯例，尽管它在技术上并不需要。因此，优良作法也是遵循这种CRD结构。一些CRD功能甚至需要这种结构; 例如，自定义资源的*/ status*子资源（请参阅[“状态子资源”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#status-subresource)） - 启用时 - 始终仅应用于`status`自定义资源实例的子结构。它无法重命名。
+尽管对于不同类型来说spec`和`status中的实际内容是不同的，但是将资源的信息分为spec和status两个部分是Kubernetes中的一个约定俗成。我们推荐遵循这种CRD结构的划分方法。一些CRD功能甚至依赖于这种结构; 例如，自定义资源的*/ status*子资源（请参阅[“状态子资源”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#status-subresource)） 当启用时，对于该自定义资源的操作，将仅作用于`status`字段下的内容。并且不能将它重命名。
 
-### GOLANG封装结构
+### GOLANG 包结构
 
-如我们已经看到，Golang类型传统上放在包*pkg / apis /* */中*名为*types.go*的文件中。除了该文件之外，还有一些我们想要浏览的文件。其中一些是由开发人员手动编写的，而另一些是使用代码生成器生成的。详细信息请参见[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)。*groupversion*
+如我们所见，Golang类型通常定义在名为types.go的文件中，该文件放在包*pkg / apis /*group */version中*。除了这个文件，我们再来看看其他的文件。其中一些是由开发人员手动编写的，而另一些是使用代码生成器生成的。详细信息请参见[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)。
 
-该*doc.go*文件描述了API的目的，包括许多包全局代码生成标签：
+名称为*doc.go*的文件描述了API的目的，同时定义了包级别的全局代码生成标记：
 
-```
+```go
 // Package v1alpha1 contains the cnat v1alpha1 API group
 //
 // +k8s:deepcopy-gen=package
@@ -760,9 +764,9 @@ type Deployment struct {
 package v1alpha1
 ```
 
-接下来，*register.go*包含帮助程序以将自定义资源Golang类型注册到方案中（请参阅[“方案”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#scheme)）：
+register.go包含帮助代码，将自定义资源Golang类型注册到scheme中（请参阅[“scheme”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#scheme)）：
 
-```
+```go
 package version
 
 import (
@@ -806,17 +810,17 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 }
 ```
 
-然后，*zz_generated.deepcopy.go*定义在自定义资源Golang顶级类型深复制方法（即，`SomeKind`与`SomeKindList`在前面的示例代码）。此外，所有substructs（像那些为`spec`和`status`）成为深可复制为好。
+*zz_generated.deepcopy.go*定义了自定义资源的顶级Golang类型的深拷贝方法（例如，之前示例代码中的`SomeKind`与`SomeKindList`）。另外，其他子结构的深拷贝方法（如`spec`和`status`）。
 
-因为本例使用的标签`+k8s:deepcopy-gen=package`在*doc.go*，深拷贝世代是选择退出的基础上; 也就是说，`DeepCopy`为包中没有选择退出的每种类型生成方法`+k8s:deepcopy-gen=false`。有关详细信息，请参阅[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)，尤其是[“deepcopy-gen标签”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#deepcopy-tags)。
+因为本例*doc.go*文件中使用的标签为`+k8s:deepcopy-gen=package`，默认该包下的所有对象都会生成深拷贝; 也就是说，如果某个类型不希望生成深拷贝，需要在类型定义上方单独设置标记`+k8s:deepcopy-gen=false`。有关详细信息，请参阅[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)，尤其是[“deepcopy-gen标记”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#deepcopy-tags)。
 
-### 通过CLIENT-GEN创建的类型客户端
+### 通过CLIENT-GEN创建类型化客户端
 
-与API包*PKG的/ apis / group/version*到位，客户端发生器`client-gen`创建一个输入客户端（参见[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)的详细信息，特别是[“客户端根标签”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#clientgen-tags)），在*PKG /生成/ clientset /版本*默认（PKG /客户端/客户端/版本化的旧版本的生成器）。更确切地说，生成的顶级对象是客户端集。它包含许多API组，版本和资源。
+与API包的位置*pkg / apis / group/version*对应，客户端生成器`client-gen`创建的类型化客户端代码默认的生成路径为（参见[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)的详细信息，特别是[“客户端根标签”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#clientgen-tags)），*pkg /generated/ clientset / versioned*（pkg /client/clientset/versioned 旧版本的生成器生成代码的路径）。准确地说，生成的是客户端的集合。它包含多种API组，版本和资源。
 
-该[顶层文件](http://bit.ly/2GdcikH)如下所示：
+客户端集合的[文件](http://bit.ly/2GdcikH)如下所示：
 
-```
+```go
 // Code generated by client-gen. DO NOT EDIT.
 
 package versioned
@@ -857,9 +861,9 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 }
 ```
 
-客户端集由接口表示，`Interface`并为每个版本提供对API组客户端接口的访问权限 - 例如，`CnatV1alpha1Interface`在此示例代码中：
+客户端集合定义了名为Interface的接口，并且为每个版本提供对API组客户端接口的访问 - 例如，本例中CnatV1alpha1Interface：
 
-```
+```go
 type CnatV1alpha1Interface interface {
     RESTClient() rest.Interface
     AtsGetter
@@ -887,9 +891,9 @@ type AtInterface interface {
 }
 ```
 
-可以使用`NewForConfig`辅助函数创建客户端集的实例。这类似于[“创建和使用客户端”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)讨论的核心Kubernetes资源[的客户端](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)：
+可以使用NewForConfig帮助方法创建客户端集合的实例。这与[“创建和使用客户端”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)讨论的，创建标准Kubernetes资源[的客户端](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#rest-client-config)类似：
 
-```
+```go
 import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/client-go/tools/clientcmd"
@@ -906,19 +910,19 @@ ats := clientset.CnatV1alpha1Interface().Ats("default")
 book, err := ats.Get("kubernetes-programming", metav1.GetOptions{})
 ```
 
-如您所见，代码生成机制允许我们以与核心Kubernetes资源相同的方式为自定义资源编写逻辑。也可以使用像线人这样的高级工具; 看`informer-gen`在[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)。
+如您所见，代码生成机制允许我们以与操作标准Kubernetes资源相同的方式为自定义资源编写逻辑。也可以使用像informer这样的高级工具; 参见[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)`informer-gen`。
 
 ## operator SDK和Kubebuilder的controller-runtime客户端
 
-对于为了完整起见，我们想快速浏览一下第三个客户端，它被列为[“开发人员对自定义资源的视图”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#crd-dev)的第二个选项。该`controller-runtime`项目为[第6章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#ch_operator-solutions)介绍的运营商解决方案Operator SDK和Kubebuilder提供了基础。它包括一个使用“类型[剖析”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#anatomy-of-CRD-types)提供的Go类型的客户端。
+对于为了完整起见，我们想快速浏览一下第三种客户端，它可以作为[“从开发视角看自定义资源”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#crd-dev)的第二个选项。`controller-runtime`项目为[第6章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#ch_operator-solutions)介绍的operator解决方案Operator SDK和Kubebuilder提供了基础。它包含了一个客户端，正用到了之前“[类行的构成”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#anatomy-of-CRD-types)介绍的Go结构。
 
-与`client-gen`先前[“通过客户端创建的类型化客户端”的生成客户端相比](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)，并且类似于[“动态客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#dynamic-client)，该客户端是一个实例，能够处理在给定方案中注册的任何类型。
+与先前[“通过client-gen客户端创建的类型化客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)，和[“动态客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#dynamic-client)相比，这个客户端是一个实例，它能够处理在给定scheme中注册的任何类型。
 
-它使用来自API服务器的发现信息将种类映射到HTTP路径。请注意，[第6章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#ch_operator-solutions)将详细介绍如何将此客户端用作这两个运算符解决方案的一部分。
+它使用来自API服务器的discovery将类型映射到HTTP路径。请注意，[第6章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#ch_operator-solutions)将更详细地介绍那两个operator的框架是如何使用这个客户端的。
 
-以下是如何使用的快速示例`controller-runtime`：
+以下是使用`controller-runtime`的示例：
 
-```
+```go
 import (
     "flag"
 
@@ -941,11 +945,11 @@ podList := &corev1.PodList{}
 err := cl.List(context.TODO(), client.InNamespace("default"), podList)
 ```
 
-客户端对象的`List()`方法接受`runtime.Object`在给定方案中注册的任何方法，在这种情况下是从`client-go`所有标准Kubernetes种类中注册的方案。在内部，客户端使用给定的方案将Golang类型映射`*corev1.PodList`到GVK。在第二步中，该`List()`方法使用发现信息来获取pod的GVR `schema.GroupVersionResource{"", "v1", "pods"}`，因此访问*/ api / v1 / namespace / default / pods*以获取传递的命名空间中的pod列表。
+客户端对象的`List()`方法接受任何实现了runtime.Object`接口对象，这个对象事先需要在给定的scheme中注册，这个例子中是由`client-go将所有标准Kubernetes类型默认注册到了scheme中。在内部过程来看，客户端使用传入的scheme将Golang类型`*corev1.PodList`转换为GVK。在第二步中，该`List()`方法使用discovery接口来获取pod的GVR，即 `schema.GroupVersionResource{"", "v1", "pods"}`，因此访问*/ api / v1 / {namespace} / default / pods* 就可以得到该命名空间中的pod列表。
 
-相同的逻辑可以与自定义资源一起使用。主要区别是使用包含传递的Go类型的自定义方案：
+自定义资源同样适用。主要区别是给定的scheme对象中需要提前注册自定义资源对应的Go类型：
 
-```
+```go
 import (
     "flag"
 
@@ -972,15 +976,15 @@ list := &cnatv1alpha1.AtList{}
 err := cl.List(context.TODO(), client.InNamespace("default"), list)
 ```
 
-请注意`List()`命令的调用根本不会发生变化。
+注意`List()`命令调用没有变化。
 
-想象一下，您编写了一个使用此客户端访问许多不同类型的运算符。使用[“通过client-gen创建](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)的类型化客户端[”的类型客户端](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)，您必须将许多不同的客户端传递给操作员，使得管道代码非常复杂。相比之下，`controller-runtime`这里介绍的客户只是所有类型的一个对象，假设它们都在一个方案中。
+可以想象一下，您编写了一个operator使用客户端访问许多不同类型的资源。如果采用（[“通过client-gen创建类型化客户端](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#clientgen-client)”）类型化客户端，您需要创建许多不同的客户端传递给operator，使得代码非常复杂。相比之下，`controller-runtime`这里只需要一个可以操作所有类型的客户端，这些类型都在给定的scheme注册好。
 
-所有三种类型的客户端都有其用途，根据使用它们的上下文有利有弊。在处理未知对象的通用控制器中，只能使用动态客户端。在类型安全有助于强制执行代码正确性的控制器中，生成的客户端非常适合。Kubernetes项目本身有很多贡献者，即使代码的稳定性非常重要，即使它被很多人扩展和重写。如果方便和高速度和最小的管道是重要的，`controller-runtime`客户是一个很好的选择。
+所有三种类型的客户端都有其用途、各有利弊。在处理未知对象的通用控制器中，只能使用动态客户端。在强调类型安全的场景中，类型化的客户端可以保证代码执行的正确性，生成类型化的客户端非常适合。Kubernetes项目本身有很多贡献者，即使代码的稳定性非常重要，即使它被很多人扩展和重写。如果希望方便和快速对您来说更重要些，`controller-runtime`客户端是一个不错的选择。
 
-# 摘要
+# 总结
 
-我们向您介绍了自定义资源，本章中Kubernetes生态系统中使用的中心扩展机制。到目前为止，您应该很好地了解它们的功能和限制以及可用的客户端。
+我们向您介绍了自定义资源，Kubernetes生态系统中重要的扩展机制。到目前为止，您应该很好地了解它们的功能和限制以及几种可用的客户端。
 
 现在让我们继续使用代码生成来管理所述资源。
 
