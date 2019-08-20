@@ -1,138 +1,138 @@
-# 第6章编写运算符的解决方案
+# 第6章编写operator
 
-所以到目前为止，我们已经在[“控制器和操作员”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#ch_controllers-operators)的概念层面上看过自定义控制器和运算符，在[第5章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)，我们将讨论如何使用Kubernetes代码生成器 - 一种处理该主题的低级方法。在本章中，我们将介绍三个解决方案 详细编写自定义控制器和操作员，并讨论更多替代方案。
+到目前为止，在第一章[“控制器和operator”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#ch_controllers-operators)我们从概念上了解了自定义控制器和operator，在[第5章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)，我们讨论了如何使用Kubernetes代码生成器 - 一种在低层次处理这个问题的方法。在本章中，我们将介绍三个开发自定义控制器和操作员的方案，并介绍更多的可选方案。
 
-使用本章中讨论的解决方案之一应该可以帮助您避免编写大量重复代码，并使您能够专注于业务逻辑，而不是样板代码。它应该让您更快地开始并提高您的工作效率。
+使用本章中讨论的3个解决方案中任何一个都会帮助您避免编写大量重复代码，并使您能够专注于业务逻辑，而不是框架代码。它应该会让您更快地上手并提高您的工作效率。
 
 ###### 注意
 
-一般而言，运营商以及我们在本章中具体讨论的工具在2019年中期仍在迅速发展。虽然我们尽力而为，但您在此处看到的某些命令和/或输出可能会发生变化。考虑到这一点，并确保始终使用相应工具的最新版本，密切关注相应的问题跟踪器，邮件列表和Slack通道。
+目前（2019年中期），我们在本章中讨论到的operator开发工具仍在迅速发展。您在此处看到的某些命令或输出可能与您在使用时看到的不完全相同。基于这点考虑，我们建议您始终使用相应工具的最新版本，密切关注相应的问题跟踪，邮件列表和Slack通道，寻找和解决您遇到的问题。
 
-虽然有在线资源可以[比较](http://bit.ly/2ZC5fZT)我们在此讨论的解决方案，但我们不会向您推荐具体的解决方案。但是，我们鼓励您自己评估和比较它们，并选择最适合您的组织和环境的那个。
+对于本文讨论的解决方案，网上已经有一些[比较](http://bit.ly/2ZC5fZT)。这里我们不会向您推荐具体的解决方案，但是我们鼓励您自己评估和比较它们，并选择最适合您的那个。
 
-# 制备
+# 准备
 
-我们将使用`cnat`（`at`我们在[“动机示例”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#mot-example)介绍的cloud-native ）作为本章中不同解决方案的运行示例。如果你想跟随，请注意我们假设你：
+我们将使用`cnat`（云原生的`at`示例，详见[“示例”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch01.html#mot-example) ）作为本章中不同解决方案的示例。如果你想使用这个列子，请检查您的环境是否具备：
 
-1. 安装了Go版本1.12或更高版本并正确设置。
-2. 有权访问Kubernetes集群中的1.12或以上，或者通过在当地如版本`kind`或`k3d`，或者远程通过您最喜欢的云服务提供商和`kubectl`配置进行访问。
-3. `git clone`我们的[GitHub存储库](http://bit.ly/2N3R6U4)。此处提供了完整，有效的源代码和以下部分中显示的必要命令。请注意，我们在这里展示的是如何从头开始工作。如果您想查看结果而不是自己执行这些步骤，也欢迎您克隆存储库并仅运行命令来安装CRD，安装CR并启动自定义控制器。
+1. 安装了Go1.12或更高版本并正确设置。
+2. 能够正常访问Kubernetes1.12或以上版本的集群并且正确配置了`kubectl`，能够访问（可以通过`kind`或`k3d`本机搭建集群，也可以通过远程访问云服务提供商的集群）
+3. `git clone`我们提供的[GitHub存储库](http://bit.ly/2N3R6U4)。这个代码是完整、可用的，可以结合下文介绍的命令来操作。请注意，我们将会从头开始演示。如果您想查看结果，可以直接克隆存储库并执行命令来安装CRD，安装CR并启动自定义控制器。
 
-将这些内务管理项目排除在外，让我们跳到编写操作员：我们将`sample-controller`在本章中介绍，Kubebuilder和Operator SDK。
+做完准备工作，让我们开始编写operator：我们将介绍三种方式`sample-controller`，Kubebuilder和Operator SDK。
 
-准备？让我们来吧！
+准备好了吗？让我们开始吧！
 
-# 以下样本控制器
+# sample-controller方式
 
-让我们从`cnat`基于[*k8s.io/sample-controller*](http://bit.ly/2UppsTN)的实现开始，它[直接](http://bit.ly/2Yas9HK)使用`client-go`库。在使用[*k8s.io/code-generator*](http://bit.ly/2Kw8I8U)生成一个类型的客户端，告密者，一线明星，和深拷贝功能。每当自定义控制器中的API类型发生变化时 - 例如，在自定义资源中添加新字段 - 您必须使用*update-codegen.sh*脚本（另请参阅GitHub中的[源代码](http://bit.ly/2Fq3Td1)）来重新生成上述源文件。`sample-controller`
+让我们基于[*k8s.io/sample-controller*](http://bit.ly/2UppsTN)来实现`cnat`，它[直接](http://bit.ly/2Yas9HK)使用了`client-go`库。`sample-controller`使用[*k8s.io/code-generator*](http://bit.ly/2Kw8I8U)生成一个类型化的客户端，informers，listers，以及深拷贝方法。每当自定义控制器中的API类型发生变化时（ 例如，在自定义资源中添加新字段）您必须使用*update-codegen.sh*脚本来重新生成源代码文件（请参阅GitHub中的[源代码](http://bit.ly/2Fq3Td1)）。
 
 ###### 警告
 
-您可能已经注意到*k8s.io*被用作整本书中的基本URL。我们在[第3章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#ch_client-go)介绍了它的用法; 作为提醒，它实际上是*kubernetes.io*的别名，在Go包管理的上下文中，它解析为*github.com/kubernetes*。请注意，*k8s.io*没有自动重定向。所以，例如，*k8s.io / sample-control*真的意味着你应该看看[*github.com/kubernetes/sample-controller*](http://bit.ly/2UppsTN)，等等。
+您可能已经注意到*k8s.io*被用作整本书中的基本URL。我们在[第3章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#ch_client-go)介绍了它的用法; 需要注意，它实际上是*kubernetes.io*的别名，在Go语言的包管理中，它被解析为*github.com/kubernetes*。而*k8s.io*不会自动转换。所以，对于*k8s.io / sample-control*包路径对应的源代码路径应该查看[*github.com/kubernetes/sample-controller*](http://bit.ly/2UppsTN)。
 
-好的，让我们按照以下方式[`cnat`](http://bit.ly/2RpHhON)使用我们的运算符。（请参阅[我们的仓库中](http://bit.ly/2N3R6U4)的[相应目录](http://bit.ly/2N3R6U4)。）`client-go``sample-controller`
+好的，让我们按照`sample-controller`的方式，使用`client-go`实现我们的[`cnat`](http://bit.ly/2RpHhON)operator。（请参阅[我们仓库中的相应目录](http://bit.ly/2N3R6U4)）
 
 ## 引导
 
-至开始，做一个**go get k8s.io/sample-controller**将源和依赖项放到你的系统上，它应该在*$ GOPATH / src / k8s.io / sample- \ controller中*。
+开始执行**go get k8s.io/sample-controller** 命令，将下载源代码和依赖项到我们本机，它将被下载到$ GOPATH / src / k8s.io / sample-controller目录中。
 
-如果从头开始，将*sample-controller*目录的内容复制到您选择的目录中（例如，我们在repo中使用*cnat-client-go*），您可以运行以下命令序列来构建和运行基本控制器（使用默认实现，而不是`cnat`业务逻辑）：
+将*sample-controller*目录的内容复制到您选择的目录中（例如，我们在repo中使用*cnat-client-go*），您可以顺序运行以下命令来构建和运行基本的控制器（包含默认实现，还没有加入cnat业务逻辑）：
 
-```
+```shell
 # build custom controller binary:
-$ 去构建-o cnat-controller。
+$ go build -o cnat-controller .
 
 # launch custom controller locally:
-$ ./cnat-controller -kubeconfig =$HOME/.kube/config
+$ ./cnat-controller -kubeconfig=$HOME/.kube/config
 ```
 
-此命令将启动自定义控制器并等待您注册CRD并创建自定义资源。我们现在就做，看看会发生什么。在第二个终端会话，输入：
+此命令将启动自定义控制器，等待您注册CRD并创建自定义资源。在第二个终端，输入：
 
-```
-$ kubectl apply -f artifacts / examples / crd.yaml
-```
-
-使 确保CRD正确注册并可以这样使用：
-
-```
-$ kubectl得到crds
-姓名创建于
-foos.samplecontroller.k8s.io 2019-05-29T12：16：57Z
+```shell
+$ kubectl apply -f artifacts/examples/crd.yaml
 ```
 
-请注意，您可能会在此处看到其他CRD，具体取决于您使用的Kubernetes发行版; 但是，*至少*应该列出*foos.samplecontroller.k8s.io*。
+想确认CRD已正确注册，可以执行命令：
 
-接下来，我们创建示例自定义资源*foo.samplecontroller.k8s.io/example-foo*并检查控制器是否完成其工作：
-
-```
-$ kubectl apply -f artifacts / examples / example-foo.yaml
-创建了foo.samplecontroller.k8s.io/example-foo
-
-$ kubectl得到po，rs，deploy，foo
-NAME READY STATUS RESTARTS AGE
-pod / example-foo-5b8c9679d8-xjhdf 1/1运行    0          67s
-
-NAME希望当前的准备好年龄
-replicaset.extensions / example-foo-5b8c9679d8    1         1         1     67s
-
-名称准备好最新可用年龄
-deployment.extensions / example-foo 1/1      1            1           67s
-
-姓名年龄
-foo.samplecontroller.k8s.io/example-foo 67s
+```shell
+$ kubectl get crds
+NAME                            CREATED AT
+foos.samplecontroller.k8s.io    2019-05-29T12:16:57Z
 ```
 
-是的，它按预期工作！我们现在可以继续实现实际的`cnat`特定业务逻辑。
+您应该在返回信息中看到很多CRD，实际的返回的CRD信息列表与您的环境相关，但是其中应该包含*foos.samplecontroller.k8s.io*。
 
-## 商业逻辑
+接下来，我们创建自定义资源实例*foo.samplecontroller.k8s.io/example-foo*，并检查控制器是否正常执行了它的业务逻辑：
 
-至开始实现业务逻辑，我们首先将现有目录*pkg / apis / samplecontroller*重命名为*pkg / apis / cnat*，然后创建我们自己的CRD和自定义资源，如下所示：
+```shell
+$ kubectl apply -f artifacts/examples/example-foo.yaml
+foo.samplecontroller.k8s.io/example-foo created
 
+$ kubectl get po,rs,deploy,foo
+NAME                                           READY   STATUS    RESTARTS   AGE
+pod/example-foo-5b8c9679d8-xjhdf               1/1     Running   0          67s
+
+NAME                                           DESIRED   CURRENT   READY AGE
+replicaset.extensions/example-foo-5b8c9679d8   1         1         1     67s
+
+NAME                                           READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.extensions/example-foo              1/1     1            1           67s
+
+NAME                                           AGE
+foo.samplecontroller.k8s.io/example-foo        67s
 ```
-$ cat artifacts / examples / cnat-crd.yaml
-apiVersion：apiextensions.k8s.io/v1beta1
-kind：CustomResourceDefinition
-元数据：
+
+可以看到，它正常执行了！我们现在可以继续实现cnat业务逻辑。
+
+## 业务逻辑
+
+下一步实现业务逻辑，我们首先将现有目录*pkg / apis / samplecontroller*重命名为*pkg / apis / cnat*，然后创建我们自己的CRD和自定义资源，如下所示：
+
+```shell
+$ cat artifacts/examples/cnat-crd.yaml
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
   name: ats.cnat.programming-kubernetes.info
-规格：
-  group：cnat.programming-kubernetes.info
-  版本：v1alpha1
-  名称：
-    亲切的：在
-    复数：ats
-  范围：Namespaced
+spec:
+  group: cnat.programming-kubernetes.info
+  version: v1alpha1
+  names:
+    kind: At
+    plural: ats
+  scope: Namespaced
 
-$ cat artifacts / examples / cnat-example.yaml
-apiVersion：cnat.programming-kubernetes.info/v1alpha1
-亲切的：在
-元数据：
-  标签：
+$ cat artifacts/examples/cnat-example.yaml
+apiVersion: cnat.programming-kubernetes.info/v1alpha1
+kind: At
+metadata:
+  labels:
     controller-tools.k8s.io: "1.0"
-  name：example-at
-规格：
-  时间表"2019-04-12T10:12:00Z"
-  command::"echo YAY"
+  name: example-at
+spec:
+  schedule: "2019-04-12T10:12:00Z"
+  command: "echo YAY"
 ```
 
-请注意，每当API类型发生更改时（例如，当您向`At`CRD 添加新字段时），您必须执行*update-codegen.sh*脚本，如下所示：
+请注意，每当API类型发生更改时（例如，当您向`At` CRD类型添加新字段时），您必须执行*update-codegen.sh*脚本，如下所示：
 
-```
+```shell
 $ ./hack/update-codegen.sh
 ```
 
 这将自动生成以下内容：
 
-- *包装/的API / CNAT / v1alpha1 / zz_generated.deepcopy.go*
-- *PKG /生成/ **
+- *pkg/apis /cnat/v1alpha1/zz_generated.deepcopy.go*
+- pkg/generated/*
 
-在业务逻辑方面，我们在运营商中实现了两个部分：
+在业务逻辑方面，我们在operator中实现了两个部分：
 
-- 在[*types.go中，*](http://bit.ly/31QosJw)我们修改`AtSpec`结构以包含相应的字段，例如`schedule`和`command`。请注意，`update-codegen.sh`每当您在此处更改某些内容时都必须运行，以便重新生成相关文件。
-- 在[*controller.go中，*](http://bit.ly/31MM4OS)我们更改`NewController()`和`syncHandler()`函数以及添加辅助函数，包括创建窗格和检查调度时间。
+- 在[*types.go中*](http://bit.ly/31QosJw)我们修改`AtSpec`结构添加相应的字段，例如`schedule`和`command`。请注意，每当您在此处更改某些内容时都必须运行`update-codegen.sh`，以便重新生成相关文件。
+- 在[*controller.go中，*](http://bit.ly/31MM4OS)我们更改`NewController()`和`syncHandler()`函数以及添加帮助函数，包括创建pods和检查调度时间。
 
-在*types.go中*，请注意代表`At`资源三个阶段的三个常量：直到预定的时间`PENDING`，然后`RUNNING`到完成，最后在`DONE`状态：
+在*types.go中*，请注意代表`At`资源三个阶段的三个常量：在预定的时间之前处于`PENDING`，然后开始执行时`RUNNING`状态，最后完成是`DONE`状态：
 
-```
+```go
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -160,13 +160,13 @@ type AtStatus struct {
 }
 ```
 
-请注意构建标记的显式用法`+k8s:deepcopy-gen:interfaces`（请参阅[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)），以便自动生成相应的源。
+请注意显式定义的标记用法`+k8s:deepcopy-gen:interfaces`（请参阅[第5章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)），用于自动生成相应的源代码。
 
-我们现在可以实现自定义控制器的业务逻辑。也就是说，我们-从阶段实现三者之间的状态过渡`PhasePending`到`PhaseRunning`以`PhaseDone`-in [controller.go](http://bit.ly/31MM4OS)。
+我们现在可以实现自定义控制器的业务逻辑。也就是说，我们在 [controller.go](http://bit.ly/31MM4OS)中实现三个状态`PhasePending`、`PhaseRunning`和`PhaseDone`的状态转换。
 
-在[“工作队列”中，](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#workqueue)我们介绍并解释了`client-go`提供的工作队列。现在，我们可以把这些知识来工作：在`processNextWorkItem()`中*controller.go* -to更准确地说，在[线路176至186](http://bit.ly/2WYDbyi) -你可以找到以下（生成）的代码：
+在[“工作队列”中，](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#workqueue)我们介绍了`client-go`提供的工作队列。现在，我们来实践一下：在文件*controller.go*中`processNextWorkItem()`方法（准确地说，在[176行至186行](http://bit.ly/2WYDbyi) ）有以下（生成）的代码：
 
-```
+```go
 if when, err := c.syncHandler(key); err != nil {
     c.workqueue.AddRateLimited(key)
     return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
@@ -179,15 +179,15 @@ if when, err := c.syncHandler(key); err != nil {
 }
 ```
 
-这个片段展示了如何`syncHandler()`调用我们的（尚未编写的）自定义函数（稍后解释）并涵盖以下三种情况：
+这个代码片段展示了`syncHandler()`是如何调用我们的自定义函数（尚未编写的，稍后解释）它处理以下三种逻辑：
 
-1. 第一个`if`分支通过`AddRateLimited()`函数调用重新排列项目，处理瞬态错误。
-2. 第二个分支，`else if`通过`AddAfter()`函数调用重新排列项目以避免热循环。
-3. 最后一种情况`else`是，该项已成功处理并通过`Forget()`函数调用被丢弃。
+1. 第一个`if`分支当错误发生时，通过`AddRateLimited()`方法调用重新入队操作。
+2. 第二个分支，`else if`通过`AddAfter()`方法调用重新入队操作以避免hot-looping。
+3. 最后一种情况`else`是，该事件对象已成功处理，使用Forget()方法丢弃。
 
 现在我们已经对通用处理有了充分的了解，让我们继续讨论特定于业务逻辑的功能。关键是上述`syncHandler()`功能，我们正在实现自定义控制器的业务逻辑。它有以下签名：
 
-```
+```go
 // syncHandler compares the actual state with the desired state and attempts
 // to converge the two. It then updates the Status block of the At resource
 // with the current status of the resource. It returns how long to wait
@@ -199,7 +199,7 @@ func (c *Controller) syncHandler(key string) (time.Duration, error) {
 
 此`syncHandler()`函数实现以下状态转换：[1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#idm46336858995208)
 
-```
+```go
 ...
 // If no phase set, default to pending (the initial phase):
 if instance.Status.Phase == "" {
@@ -291,9 +291,9 @@ if err != nil {
 return time.Duration(0), nil
 ```
 
-此外，为了设置线人和控制器，我们在以下方面实施以下内容`NewController()`：
+此外，为了设置informer和控制器，我们实现NewController()方法：
 
-```
+```go
 // NewController returns a new cnat controller
 func NewController(
     kubeClientset kubernetes.Interface,
@@ -345,9 +345,9 @@ func NewController(
 }
 ```
 
-为了使它工作，我们还需要两个辅助函数：一个计算直到计划的时间，如下所示：
+为了使它工作，我们还需要两个帮助方法：一个用来计算距离调度执行的时间间隔，如下所示：
 
-```
+```go
 func timeUntilSchedule(schedule string) (time.Duration, error) {
     now := time.Now().UTC()
     layout := "2006-01-02T15:04:05Z"
@@ -359,9 +359,9 @@ func timeUntilSchedule(schedule string) (time.Duration, error) {
 }
 ```
 
-另一个使用`busybox`容器图像创建一个带有要执行的命令的pod ：
+另一个使用`busybox`容器镜像创建一个带有要执行命令的pod ：
 
-```
+```go
 func newPodForCR(cr *cnatv1alpha1.At) *corev1.Pod {
     labels := map[string]string{
         "app": cr.Name,
@@ -386,246 +386,246 @@ func newPodForCR(cr *cnatv1alpha1.At) *corev1.Pod {
 }
 ```
 
-我们将`syncHandler()`在本章后面的函数中重用这两个辅助函数和业务逻辑的基本流程，因此请确保您熟悉它们的详细信息。
+这里您可以稍作熟悉，在本章稍后我们会在`syncHandler()`中再次使用到这两个帮助方法和业务逻辑的基本流程。
 
-请注意，从`At`资源的角度来看，pod是辅助资源，控制器必须确保清理这些pod或以其他方式冒孤立的pod。
+请注意，从`At`资源的角度来看，pod是辅助资源，控制器必须确保清理这些pod，否则它们将会孤立的存在。
 
-现在，它`sample-controller`是学习如何制作香肠的好工具，但通常您希望专注于创建业务逻辑而不是处理样板代码。为此，您可以选择两个相关项目：Kubebuilder和Operator SDK。让我们看看每个以及如何`cnat`实现它们。
+现在，通过`sample-controller`您领略了如何开发operator，但通常您希望专注于创建业务逻辑而不是处理框架代码。因此，您可以选择另外两个项目：Kubebuilder和Operator SDK，来简化这一过程。让我们看看如何使用它们实现`cnat`。
 
 # Kubebuilder
 
-[Kubebuilder](http://bit.ly/2I8w9mz)，拥有由Kubernetes特殊兴趣小组（SIG）API Machinery维护，是一个工具和一套库，使您能够以简单有效的方式构建操作员。Kubebuilder深度潜水的最佳资源是在线[Kubebuilder书籍](https://book.kubebuilder.io/)，它将向您介绍其组件和用法。但是，我们将重点关注[`cnat`](http://bit.ly/2RpHhON)使用Kubebuilder 实现我们的运算符（请参阅[我们的Git存储库中的相应目录](http://bit.ly/2Iv6pAS)）。
+[Kubebuilder](http://bit.ly/2I8w9mz)，由Kubernetes特殊兴趣小组（SIG）API Machinery创建并维护，是一个工具和一套库，使您能够以简单有效的方式构建operator。深度了解Kubebuilder的最佳资源是在线[Kubebuilder文档](https://book.kubebuilder.io/)，它将向您介绍内部组件和用法。不过，我们将重点关注使用Kubebuilder 实现我们的operator[`cnat`](http://bit.ly/2RpHhON)（请参阅[我们的Git存储库中的相应目录](http://bit.ly/2Iv6pAS)）。
 
-首先，让我们确保安装所有依赖项 - 即[dep](http://bit.ly/2x9Yrqq)，[kustomize](http://bit.ly/2Y3JeCV)（参见[“Kustomize”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#kustomize)）和[Kubebuilder本身](http://bit.ly/32pQmfu)：
+首先，确保已安装所有依赖项 - 即[dep](http://bit.ly/2x9Yrqq)，[kustomize](http://bit.ly/2Y3JeCV)（参见[“Kustomize”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#kustomize)）和[Kubebuilder本身](http://bit.ly/32pQmfu)：
 
-```
-$ dep版本
-DEP：
- 版本：v0.5.1
- 建造日期：2019-03-11
- 去hash    ：faa6189
- go version：go1.12
- go编译器：gc
- 平台：darwin / amd64
- 特征 ： ImportDuringSolve=false
+```shell
+$ dep version
+dep:
+ version     : v0.5.1
+ build date  : 2019-03-11
+ git hash    : faa6189
+ go version  : go1.12
+ go compiler : gc
+ platform    : darwin/amd64
+ features    : ImportDuringSolve=false
 
-$ kustomize版本
-版本：{KustomizeVersion：v2.0.3 GitCommit：a6f65144121d1955266b0cd836ce954c04122dc8
-          BuildDate：2019-03-18T22：15：21 + 00:00 GoOs：darwin GoArch：amd64}
+$ kustomize version
+Version: {KustomizeVersion:v2.0.3 GitCommit:a6f65144121d1955266b0cd836ce954c04122dc8
+          BuildDate:2019-03-18T22:15:21+00:00 GoOs:darwin GoArch:amd64}
 
-$ Kubebuilder版本
-版本：version.Version {
-  KubeBuilder 版本："1.0.8"，
-  KubernetesVendor : "1.13.1",
-  GitCommit："1adf50ed107f5042d7472ba5ab50d5e1d357169d";
-  BuildDate："2019-01-25T23:14:29Z"，GoOs："unknown"，GoArch："unknown"
+$ kubebuilder version
+Version: version.Version{
+  KubeBuilderVersion:"1.0.8",
+  KubernetesVendor:"1.13.1",
+  GitCommit:"1adf50ed107f5042d7472ba5ab50d5e1d357169d",
+  BuildDate:"2019-01-25T23:14:29Z", GoOs:"unknown", GoArch:"unknown"
 }
 ```
 
-我们将引导您完成`cnat`从头开始编写操作符的步骤。首先，创建一个您选择的目录（我们在我们*的仓库*中使用*cnat-kubebuilder*），您将用作所有其他命令的基础。
+我们将从头开始编写cnat operator。首先，创建一个目录（我们在我们*的仓库*中使用*cnat-kubebuilder*），在此目录下执行所有其他命令。
 
 ###### 警告
 
-在撰写本文时，Kubebuilder正在转向新版本（v2）。由于它还不稳定，我们会显示（稳定）[版本v1](https://book-v1.book.kubebuilder.io/)的命令和设置。
+在撰写本文时，Kubebuilder正在发布新版本（v2）。由于它还不稳定，我们会使用[版本v1](https://book-v1.book.kubebuilder.io/)的命令和设置。
 
 ## 引导
 
-至引导`cnat`操作符，我们使用这样的`init`命令（请注意，这可能需要几分钟，具体取决于您的环境）：
+创建cnat` operator的第一步，我们首先执行`init命令（请注意，这可能需要几分钟，具体取决于您的环境）：
 
-```
+```shell
 $ kubebuilder init \
               --domain programming-kubernetes.info \
               --license apache2 \
               --owner "Programming Kubernetes authors"
-运行`dep确保`获取依赖项(推荐的) [y / n ]？
-和
-保证
-跑步......
-使
-go generate ./pkg / .... / cmd / ...
-go fmt ./pkg / .... / cmd / ...
-去兽医./pkg / .... / cmd / ...
-去运行vendor / sigs.k8s.io / controller-tools / cmd / controller-gen / main.go all
-CRD舱单下产生'config/crds'
-RBAC舱单下产生'config/rbac'
-去test./pkg / ... ./cmd / ... -coverprofile cover.out
-？github.com/mhausenblas/cnat-kubebuilder/pkg/apis         [没有test 文件]
-？github.com/mhausenblas/cnat-kubebuilder/pkg/controller   [没有test 文件]
-？github.com/mhausenblas/cnat-kubebuilder/pkg/webhook      [没有test 文件]
-？github.com/mhausenblas/cnat-kubebuilder/cmd/manager      [没有test 文件]
-构建-o bin / manager github.com/mhausenblas/cnat-kubebuilder/cmd/manager
+Run `dep ensure` to fetch dependencies (Recommended) [y/n]?
+y
+dep ensure
+Running make...
+make
+go generate ./pkg/... ./cmd/...
+go fmt ./pkg/... ./cmd/...
+go vet ./pkg/... ./cmd/...
+go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go all
+CRD manifests generated under 'config/crds'
+RBAC manifests generated under 'config/rbac'
+go test ./pkg/... ./cmd/... -coverprofile cover.out
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/apis        [no test files]
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/controller  [no test files]
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/webhook     [no test files]
+?       github.com/mhausenblas/cnat-kubebuilder/cmd/manager     [no test files]
+go build -o bin/manager github.com/mhausenblas/cnat-kubebuilder/cmd/manager
 ```
 
-完成此命令后，Kubebuilder已经为操作员搭建了支架，有效地生成了一堆文件，从自定义控制器到样本CRD。您的现在，基本目录应该类似于以下内容（为清晰起见，不包括巨大的*供应商*目录）：
+完成此命令后，Kubebuilder已经为operator搭建了框架，生成了一堆文件，从自定义控制器到CRD样例。您的目录结构应该类似于以下内容（为清晰起见，排除了vendor目录）：
 
-```
-$ 树 - 我的供应商
+```shell
+$ tree -I vendor
 .
-├──Dockerfile
-├──Gopkg.lock
-├──Gopkg.toml
-├──Makefile
-├──项目
-├──宾
-│└──经理
-├──cmd
-│└──经理
-│└──main.go
-├──配置
-│├──cds
-│├──默认
-├──│├──kustomization.yaml
-││├──manage_auth_proxy_patch.yaml
-││├──manage_image_patch.yaml
-││└──manage_prometheus_metrics_patch.yaml
-│├──经理
-└──│└──manage.yaml
-│└──rbac
-│├──auth_proxy_role.yaml
-│├──auth_proxy_role_binding.yaml
-│├──auth_proxy_service.yaml
-│├──rbac_role.yaml
-│└──rbac_role_binding.yaml
-├──cover.out
-├──黑客
-│└──boarplate.go.txt
-└──pkg
-    ├──apis
-    │└──apis.go
-    ├──控制器
-    │└──controller.go
-    何webhook
-        └──webhook.go
+├── Dockerfile
+├── Gopkg.lock
+├── Gopkg.toml
+├── Makefile
+├── PROJECT
+├── bin
+│   └── manager
+├── cmd
+│   └── manager
+│       └── main.go
+├── config
+│   ├── crds
+│   ├── default
+│   │   ├── kustomization.yaml
+│   │   ├── manager_auth_proxy_patch.yaml
+│   │   ├── manager_image_patch.yaml
+│   │   └── manager_prometheus_metrics_patch.yaml
+│   ├── manager
+│   │   └── manager.yaml
+│   └── rbac
+│       ├── auth_proxy_role.yaml
+│       ├── auth_proxy_role_binding.yaml
+│       ├── auth_proxy_service.yaml
+│       ├── rbac_role.yaml
+│       └── rbac_role_binding.yaml
+├── cover.out
+├── hack
+│   └── boilerplate.go.txt
+└── pkg
+    ├── apis
+    │   └── apis.go
+    ├── controller
+    │   └── controller.go
+    └── webhook
+        └── webhook.go
 
-13目录，22文件
+13 directories, 22 files
 ```
 
-接下来，我们创建一个API，即一个自定义控制器 - 使用该`create api`命令（这应该比上一个命令更快，但仍然需要一点时间）：
+接下来，我们创建一个API资源，使用create api命令创建一个自定义控制器（这应该比上一个命令快，但仍然需要一点时间）：
 
-```
-$ kubebuilder创建api \
+```shell
+$ kubebuilder create api \
               --group cnat \
-              --version v1alpha1\
-              - 来吧
-在pkg / apis [y / n 下创建资源]？
-和
-在pkg / controller [y / n 下创建控制器]？
-和
-写脚手架for你要编辑......
-包装/的API / CNAT / v1alpha1 / at_types.go
-包装/的API / CNAT / v1alpha1 / at_types_test.go
-PKG /控制器/ AT / at_controller.go
-PKG /控制器/ AT / at_controller_test.go
-跑步......
-go generate ./pkg / .... / cmd / ...
-go fmt ./pkg / .... / cmd / ...
-去兽医./pkg / .... / cmd / ...
-去运行vendor / sigs.k8s.io / controller-tools / cmd / controller-gen / main.go all
-CRD舱单下产生'config/crds'
-RBAC舱单下产生'config/rbac'
-去test./pkg / ... ./cmd / ... -coverprofile cover.out
-？github.com/mhausenblas/cnat-kubebuilder/pkg/apis         [没有test 文件]
-？github.com/mhausenblas/cnat-kubebuilder/pkg/apis/cnat    [没有test 文件]
-ok github.com/mhausenblas/cnat-kubebuilder/pkg/apis/cnat/v1alpha1 9.011s
-？github.com/mhausenblas/cnat-kubebuilder/pkg/controller   [没有test 文件]
-ok github.com/mhausenblas/cnat-kubebuilder/pkg/controller/at 8.740s
-？github.com/mhausenblas/cnat-kubebuilder/pkg/webhook      [没有test 文件]
-？github.com/mhausenblas/cnat-kubebuilder/cmd/manager      [没有test 文件]
-构建-o bin / manager github.com/mhausenblas/cnat-kubebuilder/cmd/manager
+              --version v1alpha1 \
+              --kind At
+Create Resource under pkg/apis [y/n]?
+y
+Create Controller under pkg/controller [y/n]?
+y
+Writing scaffold for you to edit...
+pkg/apis/cnat/v1alpha1/at_types.go
+pkg/apis/cnat/v1alpha1/at_types_test.go
+pkg/controller/at/at_controller.go
+pkg/controller/at/at_controller_test.go
+Running make...
+go generate ./pkg/... ./cmd/...
+go fmt ./pkg/... ./cmd/...
+go vet ./pkg/... ./cmd/...
+go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go all
+CRD manifests generated under 'config/crds'
+RBAC manifests generated under 'config/rbac'
+go test ./pkg/... ./cmd/... -coverprofile cover.out
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/apis        [no test files]
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/apis/cnat   [no test files]
+ok      github.com/mhausenblas/cnat-kubebuilder/pkg/apis/cnat/v1alpha1  9.011s
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/controller  [no test files]
+ok      github.com/mhausenblas/cnat-kubebuilder/pkg/controller/at       8.740s
+?       github.com/mhausenblas/cnat-kubebuilder/pkg/webhook     [no test files]
+?       github.com/mhausenblas/cnat-kubebuilder/cmd/manager     [no test files]
+go build -o bin/manager github.com/mhausenblas/cnat-kubebuilder/cmd/manager
 ```
 
-让我们看看发生了什么变化，重点关注已经收到更新和补充的两个目录：
+让我们看看发生了什么变化，重点关注以下两个目录：
 
-```
-$ 树配置/ pkg /
-配置/
-├──cds
-Nat└──cnat_v1alpha1_at.yaml
-├──默认
-├──├──kustomization.yaml
-│├──manage_auth_proxy_patch.yaml
-│├──manage_image_patch.yaml
-│└──manage_prometheus_metrics_patch.yaml
-├──经理
-└──└──manage.yaml
-├──rbac
-│├──auth_proxy_role.yaml
-│├──auth_proxy_role_binding.yaml
-│├──auth_proxy_service.yaml
-│├──rbac_role.yaml
-│└──rbac_role_binding.yaml
-└──样品
-    └──cnat_v1alpha1_at.yaml
-包装/
-├──apis
-├──addtoscheme_cnat_v1alpha1.go
-│├──apis.go
-.└──猫
-│├──group.go
-│└──v1alpha1
-│├──at_types.go
-│├──at_types_test.go
-│├──doc.go
-│├──register.go
-│├──v1alpha1_suite_test.go
-│└──zz_generated.deepcopy.go
-├──控制器
-│├──add_at.go
-│├──在
-││├──at_controller.go
-││├──at_controller_suite_test.go
-││└──at_controller_test.go
-│└──controller.go
-何webhook
-    └──webhook.go
+```shell
+$ tree config/ pkg/
+config/
+├── crds
+│   └── cnat_v1alpha1_at.yaml
+├── default
+│   ├── kustomization.yaml
+│   ├── manager_auth_proxy_patch.yaml
+│   ├── manager_image_patch.yaml
+│   └── manager_prometheus_metrics_patch.yaml
+├── manager
+│   └── manager.yaml
+├── rbac
+│   ├── auth_proxy_role.yaml
+│   ├── auth_proxy_role_binding.yaml
+│   ├── auth_proxy_service.yaml
+│   ├── rbac_role.yaml
+│   └── rbac_role_binding.yaml
+└── samples
+    └── cnat_v1alpha1_at.yaml
+pkg/
+├── apis
+│   ├── addtoscheme_cnat_v1alpha1.go
+│   ├── apis.go
+│   └── cnat
+│       ├── group.go
+│       └── v1alpha1
+│           ├── at_types.go
+│           ├── at_types_test.go
+│           ├── doc.go
+│           ├── register.go
+│           ├── v1alpha1_suite_test.go
+│           └── zz_generated.deepcopy.go
+├── controller
+│   ├── add_at.go
+│   ├── at
+│   │   ├── at_controller.go
+│   │   ├── at_controller_suite_test.go
+│   │   └── at_controller_test.go
+│   └── controller.go
+└── webhook
+    └── webhook.go
 
-11目录，27文件
-```
-
-请注意在*config / crds /中*添加了*cnat_v1alpha1_at.yaml*，它是CRD，以及*config / samples /中的**cnat_v1alpha1_at.yaml*（是，同名），表示CRD的自定义资源示例实例。此外，在*pkg /中*我们看到了许多新文件，最重要的是*apis / cnat / v1alpha1 / at_types.go*和*controller / at / at_controller.go*，我们将在下面修改这两个文件。
-
-接下来，我们`cnat`在Kubernetes中创建一个专用的命名空间并将其用作默认值，将上下文设置如下（作为一种好的做法，总是使用专用的命名空间，而不是`default`一个）：
-
-```
-$ kubectl创建ns cnat && \
-  kubectl config set-context $(kubectl config current-context )--namespace =cnat
+11 directories, 27 files
 ```
 
-我们 安装CRD：
+请注意在*config/crds/*路径中生成了*cnat_v1alpha1_at.yaml*文件，这是CRD的定义文件。在config / samples /路径中生成了cnat_v1alpha1_at.yaml文件，这是一个CR样例（与CRD文件是同名的）。此外，在*pkg /中*我们看到生成了许多新文件，最重要的是*apis / cnat / v1alpha1 / at_types.go*和*controller / at / at_controller.go*，我们将在下面修改这两个文件。
 
+接下来，我们在Kubernetes中创建一个专用的命名空间`cnat`并将其设置为默认命名空间，（推荐总是使用专用的命名空间，而不是`default`）：
+
+```shell
+$ kubectl create ns cnat && \
+  kubectl config set-context $(kubectl config current-context) --namespace=cnat
 ```
+
+安装CRD：
+
+```shell
 $ make install
-去运行vendor / sigs.k8s.io / controller-tools / cmd / controller-gen / main.go all
-根据'config/crds'
-RBAC生成的CRD清单生成'config/rbac'
-kubectl apply -f config / crds
+go run vendor/sigs.k8s.io/controller-tools/cmd/controller-gen/main.go all
+CRD manifests generated under 'config/crds'
+RBAC manifests generated under 'config/rbac'
+kubectl apply -f config/crds
 customresourcedefinition.apiextensions.k8s.io/ats.cnat.programming-kubernetes.info created
 ```
 
-和 现在我们可以在本地启动运营商：
+在本机启动operator：
 
-```
-$ 跑步
-go generate ./pkg / .... / cmd / ...
-go fmt ./pkg / .... / cmd / ...
-去兽医./pkg / .... / cmd / ...
-去运行./cmd/manager/main.go
-{"level"："info"，"ts"：1559152740.0550249， ："logger"，"entrypoint"：
-   "msg"：，"setting up client for manager"}
-{"level" ：1559152740.057556， ：，：
-   ：， ：1559152740.1396701， ：，：
-   ：， ：1559152740.1397， ：，：
-   ：， ：1559152740.139773， ：，：
-   ：， ：1559152740.139831， ：，：
-   ，： ，
-   ：：，：1559152740.139929， ：，：
-   ，：，：
-  "info""ts""logger""entrypoint""msg""setting up manager"}
-{"level""info""ts""logger""entrypoint""msg""Registering Components."}
-{"level""info""ts""logger""entrypoint""msg""setting up scheme"}
-{"level""info""ts""logger""entrypoint""msg""Setting up controller"}
-{"level""info""ts""logger""kubebuilder.controller""msg""Starting EventSource""controller""at-controller""source""kind source: /, Kind="}
-{"level""info""ts""logger""kubebuilder.controller""msg""Starting EventSource""controller""at-controller""source""kind source: /, Kind="}
+```shell
+$ make run
+go generate ./pkg/... ./cmd/...
+go fmt ./pkg/... ./cmd/...
+go vet ./pkg/... ./cmd/...
+go run ./cmd/manager/main.go
+{"level":"info","ts":1559152740.0550249,"logger":"entrypoint",
+  "msg":"setting up client for manager"}
+{"level":"info","ts":1559152740.057556,"logger":"entrypoint",
+  "msg":"setting up manager"}
+{"level":"info","ts":1559152740.1396701,"logger":"entrypoint",
+  "msg":"Registering Components."}
+{"level":"info","ts":1559152740.1397,"logger":"entrypoint",
+  "msg":"setting up scheme"}
+{"level":"info","ts":1559152740.139773,"logger":"entrypoint",
+  "msg":"Setting up controller"}
+{"level":"info","ts":1559152740.139831,"logger":"kubebuilder.controller",
+  "msg":"Starting EventSource","controller":"at-controller",
+  "source":"kind source: /, Kind="}
+{"level":"info","ts":1559152740.139929,"logger":"kubebuilder.controller",
+  "msg":"Starting EventSource","controller":"at-controller",
+  "source":"kind source: /, Kind="}
 {"level":"info","ts":1559152740.139971,"logger":"entrypoint",
   "msg":"setting up webhooks"}
 {"level":"info","ts":1559152740.13998,"logger":"entrypoint",
@@ -636,53 +636,53 @@ go fmt ./pkg / .... / cmd / ...
   "msg":"Starting workers","controller":"at-controller","worker count":1}
 ```
 
-离开 终端会话正在运行，并在新会话中安装CRD，验证它，并创建示例自定义资源，如下所示：
+保留正在运行的终端会话，打开一个新的会话，再执行命令安装CRD，并创建示例自定义资源，如下所示：
 
-```
-$ kubectl apply -f config / crds / cnat_v1alpha1_at.yaml
+```shell
+$ kubectl apply -f config/crds/cnat_v1alpha1_at.yaml
 customresourcedefinition.apiextensions.k8s.io/ats.cnat.programming-kubernetes.info
-配置
+configured
 
-$ kubectl得到crds
-姓名创建于
-ats.cnat.programming-kubernetes.info 2019-05-29T17：54：51Z
+$ kubectl get crds
+NAME                                   CREATED AT
+ats.cnat.programming-kubernetes.info   2019-05-29T17:54:51Z
 
-$ kubectl apply -f config / samples / cnat_v1alpha1_at.yaml
+$ kubectl apply -f config/samples/cnat_v1alpha1_at.yaml
 at.cnat.programming-kubernetes.info/at-sample created
 ```
 
-如果现在查看`make run`运行的会话的输出，您应该注意以下输出：
+现在查看以下刚才执行`make run`的会话，会看到以下输出：
 
-```
+```shell
 ...
- {"level"："info"，"ts"：1559153311.659829， ："logger"，"controller"：
-   "msg"，"Creating Deployment"："namespace"，"cnat"："name"：，"at-sample-deployment"}
-{"level" ：1559153311.678407， ：，：
-   ，：，：：， ：1559153311.6839428， ：，：
-   ，：，：：， ：1559153311.693443， ：，：
-   ，：， ：：，：1559153311.7023401， ：，：
-   ，：，：：，"info""ts""logger""controller""msg""Updating Deployment""namespace""cnat""name""at-sample-deployment"}
-{"level""info""ts""logger""controller""msg""Updating Deployment""namespace""cnat""name""at-sample-deployment"}
-{"level""info""ts""logger""controller""msg""Updating Deployment""namespace""cnat""name""at-sample-deployment"}
-{"level""info""ts""logger""controller""msg""Updating Deployment""namespace""cnat""name""at-sample-deployment"}
-{"level""info""ts":1559153332.986961,"logger":"controller",#
+{"level":"info","ts":1559153311.659829,"logger":"controller",
+  "msg":"Creating Deployment","namespace":"cnat","name":"at-sample-deployment"}
+{"level":"info","ts":1559153311.678407,"logger":"controller",
+  "msg":"Updating Deployment","namespace":"cnat","name":"at-sample-deployment"}
+{"level":"info","ts":1559153311.6839428,"logger":"controller",
+  "msg":"Updating Deployment","namespace":"cnat","name":"at-sample-deployment"}
+{"level":"info","ts":1559153311.693443,"logger":"controller",
+  "msg":"Updating Deployment","namespace":"cnat","name":"at-sample-deployment"}
+{"level":"info","ts":1559153311.7023401,"logger":"controller",
+  "msg":"Updating Deployment","namespace":"cnat","name":"at-sample-deployment"}
+{"level":"info","ts":1559153332.986961,"logger":"controller",#
   "msg":"Updating Deployment","namespace":"cnat","name":"at-sample-deployment"}
 ```
 
-这告诉我们整体设置成功！现在我们已经完成了脚手架并成功启动了`cnat`运营商，我们可以继续实际的核心任务：`cnat`使用Kubebuilder 实现业务逻辑。
+这说明我们设置成功！现在我们已经完成了基础框架的搭建并成功启动了`cnat` operator，我们可以继续：使用Kubebuilder 实现业务逻辑`cnat`。
 
-## 商业逻辑
+## 业务逻辑
 
-对于首先，我们将[*config / crds / cnat_v1alpha1_at.yaml*](http://bit.ly/2N1jQNb)和[*config / samples / cnat_v1alpha1_at.yaml更改*](http://bit.ly/2Xs1F7c)为我们自己的`cnat`CRD定义和自定义资源值，重新使用与[“Follow sample-controller”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#cnat-client-go)相同的结构。
+首先，我们将[*config / crds / cnat_v1alpha1_at.yaml*](http://bit.ly/2N1jQNb)和[*config / samples / cnat_v1alpha1_at.yaml更改*](http://bit.ly/2Xs1F7c)为我们自己的`cnat`对应的CRD定义和CR样例，使用与[“sample-controller示例”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#cnat-client-go)相同的结构。
 
-在业务逻辑方面，我们在运营商中实现了两个部分：
+在业务逻辑方面，我们在operator中实现了两个部分：
 
-- 在[*pkg / apis / cnat / v1alpha1 / at_types.go中，*](http://bit.ly/31KNLfO)我们修改`AtSpec`结构以包含相应的字段，例如`schedule`和`command`。请注意，`make`每当您在此处更改某些内容时都必须运行，以便重新生成相关文件。Kubebuilder使用Kubernetes生成器（在[第5章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)描述）并发布它自己的一组生成器（例如，生成CRD清单）。
-- 在[*pkg / controller / at / at_controller.go中，*](http://bit.ly/2Iwormg)我们修改了`Reconcile(request reconcile.Request)`在定义的时间创建pod 的方法`Spec.Schedule`。
+- 在[*pkg / apis / cnat / v1alpha1 / at_types.go文件中，*](http://bit.ly/31KNLfO)我们修改`AtSpec`结构增加相应的字段，例如`schedule`和`command`。请注意，每当您在此处更改某些内容时都必须运行`make`，以便重新生成相关文件。Kubebuilder使用Kubernetes生成器（在[第5章中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch05.html#ch_autocodegen)描述）并发布一组它自己的生成器（例如，生成CRD 定义文件）。
+- 在[*pkg / controller / at / at_controller.go中，*](http://bit.ly/2Iwormg)我们修改了`Reconcile(request reconcile.Request)`方法，按照`Spec.Schedule`中在定义的时间点去创建pod。
 
-在*at_types.go*：
+*at_types.go*文件：
 
-```
+```go
 const (
     PhasePending = "PENDING"
     PhaseRunning = "RUNNING"
@@ -706,9 +706,9 @@ type AtStatus struct {
 }
 ```
 
-在*at_controller.go*我们落实三个阶段之间的状态转变，`PENDING`到`RUNNING`到`DONE`：
+在*at_controller.go*文件中，我们实现三个阶段之间的状态转变，`PENDING`到`RUNNING`到`DONE`：
 
-```
+```go
 func (r *ReconcileAt) Reconcile(req reconcile.Request) (reconcile.Result, error) {
     reqLogger := log.WithValues("namespace", req.Namespace, "at", req.Name)
     reqLogger.Info("=== Reconciling At")
@@ -808,61 +808,61 @@ func (r *ReconcileAt) Reconcile(req reconcile.Request) (reconcile.Result, error)
 }
 ```
 
-请注意，最后的`Update`调用操作在*/ status*子资源上（参见[“Status subresource”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#status-subresource)）而不是整个CR。因此，在这里我们遵循规范状态分割的最佳实践。
+请注意，最后的`Update`调用操作在*/ status*子资源上（参见[“Status subresource”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#status-subresource)）而不是整个CR。因此，在这里我们遵循spec-status分离的最佳实践。
 
-现在，一旦`example-at`创建了CR ，我们就会看到本地执行的运算符的以下输出：
+当我们创建了CR实例 `example-at`，我们就会在本地执行的operator的会话中看到以下输出：
 
-```
-$ 跑步
+```shell
+$ make run
 ...
-{"level"："info"，"ts"：1555063897.488535， ："logger"，"controller"：
-   "msg"，"=== Reconciling At"："namespace"，"cnat"："at"：，"example-at"}
-{"level" ：1555063897.488621， ：，：
-   ，：，：：， ：1555063897.4886441， ：，：
-   ，：，：，：
-   ：， ：1555063897.488703， ：，：
-   ，：，： ，
-   ：：，：1555063907.489264， ：，：
-   ，：，"info""ts""logger""controller""msg""Phase: PENDING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller""msg""Checking schedule""namespace""cnat""at""example-at""Target""2019-04-12T10:12:00Z"}
-{"level""info""ts""logger""controller""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 10:12:00 +0000 UTC with a diff of 22.511336s"}
-{"level""info""ts""logger""controller""msg""=== Reconciling At""namespace""cnat""at"："example-at"}
-{"level"："info"，"ts"：1555063907.489402， ："logger"，"controller"：
-   "msg"，"Phase: PENDING"："namespace"，"cnat"："at"：，"example-at"}
-{"level" ：1555063907.489428， ：，：
-   ，：，：，：
-   ：， ：1555063907.489486， ：，：
-   ，：，：，：
-   ：， ：1555063917.490178， ：，：
-   ， ：，：：，：1555063917.4902349， ：，：
-   ，："info""ts""logger""controller""msg""Checking schedule""namespace""cnat""at""example-at""Target""2019-04-12T10:12:00Z"}
-{"level""info""ts""logger""controller""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 10:12:00 +0000 UTC with a diff of 12.510551s"}
-{"level""info""ts""logger""controller""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller""msg""Phase: PENDING""namespace""cnat"，"at"："example-at"}
-{"level"："info"，"ts"：1555063917.490247， ："logger"，"controller"：
-   "msg"，"Checking schedule"："namespace"，"cnat"："at"，"example-at"：
-   "Target"：，"2019-04-12T10:12:00Z"}
-{"level" ：1555063917.490278， ：，：
-   ，：，：，：
-   ：， ：1555063927.492718， ：，：
-   ，：，：：， ：1555063927.49283， ：，：
-   ，：，：：，：1555063927.492857， ：，：
-   ，"info""ts""logger""controller""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 10:12:00 +0000 UTC with a diff of 2.509743s"}
-{"level""info""ts""logger""controller""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller""msg""Phase: PENDING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller""msg""Checking schedule""namespace"："cnat"，"at"："example-at"，
-   "Target"："2019-04-12T10:12:00Z"}
-{"level"："info"，"ts"：1555063927.492915， ："logger"，"controller"：
-   "msg"，"Schedule parsing done"："namespace"，"cnat"："at"，"example-at"：
-   "Result"：，"2019-04-12 10:12:00 +0000 UTC with a diff of -7.492877s"}
-{"level" ：1555063927.4929411， ：，：
-   ，：，：，
-   ：：， ：1555063927.626236， ：，：
-   ，：，：：， ：1555063927.626303，：，
-   ：，：，：：，：1555063928.07445， ："info""ts""logger""controller""msg""It's time!""namespace""cnat""at""example-at""Ready to execute""echo YAY"}
-{"level""info""ts""logger""controller""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller""msg""Phase: RUNNING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller",
+{"level":"info","ts":1555063897.488535,"logger":"controller",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063897.488621,"logger":"controller",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063897.4886441,"logger":"controller",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T10:12:00Z"}
+{"level":"info","ts":1555063897.488703,"logger":"controller",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 10:12:00 +0000 UTC with a diff of 22.511336s"}
+{"level":"info","ts":1555063907.489264,"logger":"controller",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063907.489402,"logger":"controller",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063907.489428,"logger":"controller",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T10:12:00Z"}
+{"level":"info","ts":1555063907.489486,"logger":"controller",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 10:12:00 +0000 UTC with a diff of 12.510551s"}
+{"level":"info","ts":1555063917.490178,"logger":"controller",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063917.4902349,"logger":"controller",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063917.490247,"logger":"controller",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T10:12:00Z"}
+{"level":"info","ts":1555063917.490278,"logger":"controller",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 10:12:00 +0000 UTC with a diff of 2.509743s"}
+{"level":"info","ts":1555063927.492718,"logger":"controller",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063927.49283,"logger":"controller",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063927.492857,"logger":"controller",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T10:12:00Z"}
+{"level":"info","ts":1555063927.492915,"logger":"controller",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 10:12:00 +0000 UTC with a diff of -7.492877s"}
+{"level":"info","ts":1555063927.4929411,"logger":"controller",
+  "msg":"It's time!","namespace":"cnat","at":
+  "example-at","Ready to execute":"echo YAY"}
+{"level":"info","ts":1555063927.626236,"logger":"controller",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063927.626303,"logger":"controller",
+  "msg":"Phase: RUNNING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555063928.07445,"logger":"controller",
   "msg":"Pod launched","namespace":"cnat","at":"example-at",
   "name":"example-at-pod"}
 {"level":"info","ts":1555063928.199562,"logger":"controller",
@@ -876,54 +876,54 @@ $ 跑步
 ...
 ```
 
-至 验证我们的自定义控制器是否已完成其工作，执行：
+想验证我们的自定义控制器是否已完成其工作，可以执行以下命令：
 
-```
-$ kubectl到达，豆荚
-姓名年龄
-at.cnat.programming-kubernetes.info/example-at 11m
+```shell
+$ kubectl get at,pods
+NAME                                                  AGE
+at.cnat.programming-kubernetes.info/example-at        11m
 
-NAME READY STATUS RESTARTS AGE
-pod / example-at-pod 0/1完成      0          38s
-```
-
-大！该`example-at-pod`有 已创建，现在是时候看到操作的结果：
-
-```
-$ kubectl记录example-at-pod
-SUMMER
+NAME                 READY   STATUS        RESTARTS   AGE
+pod/example-at-pod   0/1     Completed     0          38s
 ```
 
-完成自定义控制器的开发后，使用此处所示的本地模式，您可能希望从中构建容器图像。随后可以使用该自定义控制器容器映像，例如，在Kubernetes部署中。您可以使用以下命令生成容器图像并将其推送到repo *quay.io/pk/cnat*：
+太棒了！`example-at-pod` 已被创建，现在我们来看看命令执行的结果：
 
+```shell
+$ kubectl logs example-at-pod
+YAY
 ```
+
+以上我们完成自定义控制器的开发后，并在本地执行。您可能希望将operator构建成镜像，在Kubernetes部署。可以使用以下命令生成容器镜像，并将其推送到镜像仓库，例如 *quay.io/pk/cnat*：
+
+```shell
 $ export IMG=quay.io/pk/cnat:v1
 
-$ 使docker-build
+$ make docker-build
 
-$ 使docker-push
+$ make docker-push
 ```
 
-有了这个，我们转向运营商SDK，它共享一些Kubebuilder的代码库和API。
+在了解如何使用Kubebuilder之后，让我们来看看如何使用operator SDK做同样的事情。
 
-# 运营商SDK
+# Operator SDK
 
-至为了更容易构建Kubernetes应用程序，CoreOS / Red Hat将运营商框架整合在一起。其中一部分是[Operator SDK](http://bit.ly/2KtpK7D)，它使开发人员无需深入了解Kubernetes API即可构建运算符。
+为了更容易构建Kubernetes应用程序，CoreOS / Red Hat将operator和代码框架整合在一起。[Operator SDK](http://bit.ly/2KtpK7D)就是其中的一部分，它使开发人员无需深入了解Kubernetes API即可开发出operators。
 
-Operator SDK提供了构建，测试和打包运算符的工具。虽然SDK中有更多可用的功能，特别是在测试时，我们专注于[`cnat`](http://bit.ly/2RpHhON)使用SDK 实现我们的运算符（请参阅[我们的Git存储库中的相应目录](http://bit.ly/2FpCtE9)）。
+Operator SDK提供了构建，测试和打包operator的工具。SDK中包含了更多其他可用的功能，特别是在测试时，不过在这里我们专注于使用SDK 实现我们的运算符[`cnat`](http://bit.ly/2RpHhON)（请参阅[我们的Git存储库中的相应目录](http://bit.ly/2FpCtE9)）。
 
 首先要做的事情是：确保[安装Operator SDK](http://bit.ly/2ZBQlCT)并检查所有依赖项是否可用：
 
-```
-$ dep版本
-DEP：
- 版本：v0.5.1
- 建造日期：2019-03-11
- 去hash    ：faa6189
- go version：go1.12
- go编译器：gc
- 平台：darwin / amd64
- 特征 ： ImportDuringSolve=false
+```shell
+$ dep version
+dep:
+ version     : v0.5.1
+ build date  : 2019-03-11
+ git hash    : faa6189
+ go version  : go1.12
+ go compiler : gc
+ platform    : darwin/amd64
+ features    : ImportDuringSolve=false
 
  $ operator-sdk --version
 operator-sdk version v0.6.0
@@ -931,15 +931,15 @@ operator-sdk version v0.6.0
 
 ## 引导
 
-现在是时候`cnat`按如下方式引导操作员了：
+现在开始按如下方式创建cnat operator：
 
-```
+```shell
 $ operator-sdk new cnat-operator && cd cnat-operator
 ```
 
 接下来，和Kubebuilder非常相似，我们添加一个API - 或简单地说：初始化自定义控制器，如下所示：
 
-```
+```shell
 $ operator-sdk add api \
                --api-version =cnat.programming-kubernetes.info/v1alpha1 \
                --kind =At
@@ -949,39 +949,39 @@ $ operator-sdk add controller \
                --kind =At
 ```
 
-这些命令产生必要的样板代码以及一些辅助功能，如深复印功能`DeepCopy()`，`DeepCopyInto()`和`DeepCopyObject()`。
+这些命令将产生所需的框架代码以及一些辅助功能，如深拷贝方法DeepCopy()`，`DeepCopyInto()`和`DeepCopyObject()。
 
-现在 我们可以将自动生成的CRD应用于Kubernetes集群：
+现在 我们可以在Kubernetes集群中创建自动生成的CRD：
 
+```shell
+$ kubectl apply -f deploy/crds/cnat_v1alpha1_at_crd.yaml
+
+$ kubectl get crds
+NAME                                             CREATED AT
+ats.cnat.programming-kubernetes.info             2019-04-01T14:03:33Z
 ```
-$ kubectl apply -f deploy / crds / cnat_v1alpha1_at_crd.yaml
 
-$ kubectl得到crds
-姓名创建于
-ats.cnat.programming-kubernetes.info 2019-04-01T14：03：33Z
-```
+我们在本地启动自定义控制器`cnat`。启动后，它就可以开始处理请求：
 
-让我们`cnat`在本地启动我们的自定义控制器。有了它，它可以开始处理请求：
-
-```
-$ OPERATOR_NAME=cnatop operator-sdk up local--namespace "cnat"
-INFO [0000 ]在本地运行运算符。
-INFO [0000 ]使用命名空间cnat。
-{"level"："info"，"ts"：1555041531.871706， ："logger"，"cmd"：
-   "msg"：，"Go Version: go1.12.1"}
-{"level" ：1555041531.871785， ：，：
-   ：， ：1555041531.8718028， ：，：
-   ：， ：1555041531.8739321， ：，：
-   ：， ：1555041531.8743382， ：，：
-   ：， ：1555041536.1611362， ：，：
-   ：， ：1555041536.1622112，：，
-   ：，：，
-  "info""ts""logger""cmd""msg""Go OS/Arch: darwin/amd64"}
-{"level""info""ts""logger""cmd""msg""Version of operator-sdk: v0.6.0"}
-{"level""info""ts""logger""leader""msg""Trying to become the leader."}
-{"level""info""ts""logger""leader""msg""Skipping leader election; not running in a cluster."}
-{"level""info""ts""logger""cmd""msg""Registering Components."}
-{"level""info""ts""logger""kubebuilder.controller""msg""Starting EventSource""controller""at-controller""source":"kind source: /, Kind="}
+```shell
+$ OPERATOR_NAME=cnatop operator-sdk up local --namespace "cnat"
+INFO[0000] Running the operator locally.
+INFO[0000] Using namespace cnat.
+{"level":"info","ts":1555041531.871706,"logger":"cmd",
+  "msg":"Go Version: go1.12.1"}
+{"level":"info","ts":1555041531.871785,"logger":"cmd",
+  "msg":"Go OS/Arch: darwin/amd64"}
+{"level":"info","ts":1555041531.8718028,"logger":"cmd",
+  "msg":"Version of operator-sdk: v0.6.0"}
+{"level":"info","ts":1555041531.8739321,"logger":"leader",
+  "msg":"Trying to become the leader."}
+{"level":"info","ts":1555041531.8743382,"logger":"leader",
+  "msg":"Skipping leader election; not running in a cluster."}
+{"level":"info","ts":1555041536.1611362,"logger":"cmd",
+  "msg":"Registering Components."}
+{"level":"info","ts":1555041536.1622112,"logger":"kubebuilder.controller",
+  "msg":"Starting EventSource","controller":"at-controller",
+  "source":"kind source: /, Kind="}
 {"level":"info","ts":1555041536.162519,"logger":"kubebuilder.controller",
   "msg":"Starting EventSource","controller":"at-controller",
   "source":"kind source: /, Kind="}
@@ -995,35 +995,35 @@ INFO [0000 ]使用命名空间cnat。
   "msg":"Starting workers","controller":"at-controller","worker count":1}
 ```
 
-我们的自定义控制器将保持此状态，直到我们创建CR，*ats.cnat.programming-kubernetes.info*。所以我们这样做：
+在我们创建CR *ats.cnat.programming-kubernetes.info* 之前自定义控制器日志信息不会再发生滚动。接下来我们创建CR实例：
 
+```shell
+$ cat deploy/crds/cnat_v1alpha1_at_cr.yaml
+apiVersion: cnat.programming-kubernetes.info/v1alpha1
+kind: At
+metadata:
+  name: example-at
+spec:
+  schedule: "2019-04-11T14:56:30Z"
+  command: "echo YAY"
+
+$ kubectl apply -f deploy/crds/cnat_v1alpha1_at_cr.yaml
+
+$ kubectl get at
+NAME                                             AGE
+at.cnat.programming-kubernetes.info/example-at   54s
 ```
-$ cat deploy / crds / cnat_v1alpha1_at_cr.yaml
-apiVersion：cnat.programming-kubernetes.info/v1alpha1
-亲切的：在
-元数据：
-  name：example-at
-规格：
-  时间表"2019-04-11T14:56:30Z"
-  command::"echo YAY"
 
-$ kubectl apply -f deploy / crds / cnat_v1alpha1_at_cr.yaml
+## 业务逻辑
 
-$ kubectl得到
-姓名年龄
-at.cnat.programming-kubernetes.info/example-at 54s
-```
+在业务逻辑方面，我们在operator中实现了两个部分：
 
-## 商业逻辑
+- 在[*pkg / apis / cnat / v1alpha1 / at_types.go中，*](http://bit.ly/31Ip2sF)我们修改`AtSpec`struct添加相应的字段，例如`schedule`和`command`，并使用`operator-sdk generate k8s`重新生成代码，同时使用`operator-sdk generate openapi` 命令生成OpenAPI。
+- 在[*pkg / controller / at / at_controller.go中，*](http://bit.ly/2Fpo5Mi)我们修改了`Reconcile(request reconcile.Request)`方法，按照`Spec.Schedule`中在定义的时间点去创建pod。
 
-在 在业务逻辑方面，我们在运营商中实现了两个部分：
+详细地修改如下，文件*at_types.go*：
 
-- 在[*pkg / apis / cnat / v1alpha1 / at_types.go中，*](http://bit.ly/31Ip2sF)我们修改`AtSpec`struct以包含相应的字段，例如`schedule`和`command`，并用于`operator-sdk generate k8s`重新生成代码，以及使用`operator-sdk generate openapi`OpenAPI位的命令。
-- 在[*pkg / controller / at / at_controller.go中，*](http://bit.ly/2Fpo5Mi)我们修改了`Reconcile(request reconcile.Request)`在定义的时间创建pod 的方法`Spec.Schedule`。
-
-更详细地应用于自举代码的更改如下（关注相关位）。在*at_types.go*：
-
-```
+```go
 // AtSpec defines the desired state of At
 // +k8s:openapi-gen=true
 type AtSpec struct {
@@ -1043,87 +1043,87 @@ type AtStatus struct {
 }
 ```
 
-在*at_controller.go*我们实施了三个阶段的状态图，`PENDING`来`RUNNING`来`DONE`。
+在*at_controller.go*文件z红我们实现了三个阶段的状态转换，`PENDING`到`RUNNING`到`DONE`。
 
 ###### 注意
 
-这[`controller-runtime`](http://bit.ly/2ZFtDKd)是另一个SIG API Machinery拥有的项目，旨在为Go包形式的构建控制器提供一套通用的低级功能。有关详细信息，请参阅[第4章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#ch_crds)。
+[`controller-runtime`](http://bit.ly/2ZFtDKd)是另一个属于SIG API Machinery的项目，这个库的目标在于以Go语言包的形式提供一套通用的低级API功能来构建控制器。有关详细信息，请参阅[第4章](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#ch_crds)。
 
-由于Kubebuilder和Operator SDK共享控制器运行时，该`Reconcile()`函数实际上是相同的：
+由于Kubebuilder和Operator SDK都使用了controller-runtime，`Reconcile()`函数实际上是相同的：
 
-```
+```go
 func (r *ReconcileAt) Reconcile(request reconcile.Request) (reconcile.Result, error) {
     the-same-as-for-kubebuilder
 }
 ```
 
-`example-at`创建CR后，我们会看到本地执行的运算符的以下输出：
+当CR `example-at`被创建后，我们会看到本地operator有以下输出：
 
-```
-$ OPERATOR_NAME=cnatop operator-sdk up local--namespace "cnat"
-INFO [0000 ]在本地运行运算符。
-INFO [0000 ]使用命名空间cnat。
+```shell
+$ OPERATOR_NAME=cnatop operator-sdk up local --namespace "cnat"
+INFO[0000] Running the operator locally.
+INFO[0000] Using namespace cnat.
 ...
-{"level"："info"，"ts"：1555044934.023597， ："logger"，"controller_at"：
-   "msg"，"=== Reconciling At"："namespace"，"cnat"："at"：，"example-at"}
-{"level" ：1555044934.023713， ：，：
-   ，：，：：， ：1555044934.0237482， ：，：
-   ，：，：，
-   ：：， ：1555044934.02382， ：，：
-   ，：，： ，
-   ：：，：1555044934.148148， ：，：
-   ，：，"info""ts""logger""controller_at""msg""Phase: PENDING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Checking schedule""namespace""cnat""at""example-at""Target""2019-04-12T04:56:00Z"}
-{"level""info""ts""logger""controller_at""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 04:56:00 +0000 UTC with a diff of 25.976236s"}
-{"level""info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at"："example-at"}
-{"level"："info"，"ts"：1555044934.148224， ："logger"，"controller_at"：
-   "msg"，"Phase: PENDING"："namespace"，"cnat"："at"：，"example-at"}
-{"level" ：1555044934.148243， ：，：
-   ，：，：，：
-   ：， ：1555044934.1482902， ：，：
-   ，：，：，：
-   ：， ：1555044944.1504588， ：，：
-   ， ：，：：，：1555044944.150568， ：，：
-   ，："info""ts""logger""controller_at""msg""Checking schedule""namespace""cnat""at""example-at""Target""2019-04-12T04:56:00Z"}
-{"level""info""ts""logger""controller_at""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 04:56:00 +0000 UTC with a diff of 25.85174s"}
-{"level""info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Phase: PENDING""namespace""cnat"，"at"："example-at"}
-{"level"："info"，"ts"：1555044944.150599， ："logger"，"controller_at"：
-   "msg"，"Checking schedule"："namespace"，"cnat"："at"，"example-at"：
-   "Target"：，"2019-04-12T04:56:00Z"}
-{"level" ：1555044944.150663， ：，：
-   ，：，：，：
-   ：， ：1555044954.385175， ：，：
-   ，：，：：， ：1555044954.3852649， ：，：
-   ，：，：：，：1555044954.385288， ：，：
-   ，"info""ts""logger""controller_at""msg""Schedule parsing done""namespace""cnat""at""example-at""Result""2019-04-12 04:56:00 +0000 UTC with a diff of 15.84938s"}
-{"level""info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Phase: PENDING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Checking schedule""namespace"："cnat"，"at"："example-at"，
-   "Target"："2019-04-12T04:56:00Z"}
-{"level"："info"，"ts"：1555044954.38534， ："logger"，"controller_at"：
-   "msg"，"Schedule parsing done"："namespace"，"cnat"："at"，"example-at"：
-   "Result"：，"2019-04-12 04:56:00 +0000 UTC with a diff of 5.614691s"}
-{"level" ：1555044964.518383， ：，：
-   ，：，：：， ：1555044964.5184839， ：，：
-   ，：，：：， ：1555044964.518566， ：，
-   ：，：，：，
-   ：：，：1555044964.5186381， ："info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Phase: PENDING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Checking schedule""namespace""cnat""at""example-at""Target""2019-04-12T04:56:00Z"}
-{"level""info""ts""logger""controller_at"，
-   "msg"："Schedule parsing done"，"namespace"："cnat"，"at"："example-at"，
-   "Result"："2019-04-12 04:56:00 +0000 UTC with a diff of -4.518596s"}
-{"level"："info"，"ts"：1555044964.5186849， ："logger"，"controller_at"：
-   "msg"，"It's time!"："namespace"，"cnat"："at"，"example-at"：
-   "Ready to execute"：，"echo YAY"}
-{"level" ：1555044964.642559， ：，：
-   ，：，：：， ：1555044964.642622， ：，：
-   ，：，：：， ：1555044964.911037 ，：，
-   ：，：，：：，：1555044964.9111192，"info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""Phase: RUNNING""namespace""cnat""at""example-at"}
-{"level""info""ts""logger""controller_at""msg""=== Reconciling At""namespace""cnat""at""example-at"}
-{"level""info""ts""logger":"controller_at",
+{"level":"info","ts":1555044934.023597,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044934.023713,"logger":"controller_at",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044934.0237482,"logger":"controller_at",
+  "msg":"Checking schedule","namespace":"cnat","at":
+  "example-at","Target":"2019-04-12T04:56:00Z"}
+{"level":"info","ts":1555044934.02382,"logger":"controller_at",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 04:56:00 +0000 UTC with a diff of 25.976236s"}
+{"level":"info","ts":1555044934.148148,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044934.148224,"logger":"controller_at",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044934.148243,"logger":"controller_at",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T04:56:00Z"}
+{"level":"info","ts":1555044934.1482902,"logger":"controller_at",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 04:56:00 +0000 UTC with a diff of 25.85174s"}
+{"level":"info","ts":1555044944.1504588,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044944.150568,"logger":"controller_at",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044944.150599,"logger":"controller_at",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T04:56:00Z"}
+{"level":"info","ts":1555044944.150663,"logger":"controller_at",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 04:56:00 +0000 UTC with a diff of 15.84938s"}
+{"level":"info","ts":1555044954.385175,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044954.3852649,"logger":"controller_at",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044954.385288,"logger":"controller_at",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T04:56:00Z"}
+{"level":"info","ts":1555044954.38534,"logger":"controller_at",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 04:56:00 +0000 UTC with a diff of 5.614691s"}
+{"level":"info","ts":1555044964.518383,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044964.5184839,"logger":"controller_at",
+  "msg":"Phase: PENDING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044964.518566,"logger":"controller_at",
+  "msg":"Checking schedule","namespace":"cnat","at":"example-at",
+  "Target":"2019-04-12T04:56:00Z"}
+{"level":"info","ts":1555044964.5186381,"logger":"controller_at",
+  "msg":"Schedule parsing done","namespace":"cnat","at":"example-at",
+  "Result":"2019-04-12 04:56:00 +0000 UTC with a diff of -4.518596s"}
+{"level":"info","ts":1555044964.5186849,"logger":"controller_at",
+  "msg":"It's time!","namespace":"cnat","at":"example-at",
+  "Ready to execute":"echo YAY"}
+{"level":"info","ts":1555044964.642559,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044964.642622,"logger":"controller_at",
+  "msg":"Phase: RUNNING","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044964.911037,"logger":"controller_at",
+  "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
+{"level":"info","ts":1555044964.9111192,"logger":"controller_at",
   "msg":"Phase: RUNNING","namespace":"cnat","at":"example-at"}
 {"level":"info","ts":1555044966.038684,"logger":"controller_at",
   "msg":"=== Reconciling At","namespace":"cnat","at":"example-at"}
@@ -1136,78 +1136,78 @@ INFO [0000 ]使用命名空间cnat。
 ...
 ```
 
-在这里你可以看到我们的运营商的三个阶段：`PENDING`直到时间戳`1555044964.518566`，然后`RUNNING`，然后`DONE`。
+在这里你可以看到operator的三个状态：直到时间戳`1555044964.518566`一直在`PENDING`，然后`RUNNING`，然后`DONE`。
 
 要验证自定义控制器的功能并检查操作结果，请输入：
 
-```
-$ kubectl到达，豆荚
-姓名年龄
-at.cnat.programming-kubernetes.info/example-at 23m
+```shell
+$ kubectl get at,pods
+NAME                                                  AGE
+at.cnat.programming-kubernetes.info/example-at        23m
 
-NAME READY STATUS RESTARTS AGE
-pod / example-at-pod 0/1已完成      0          46秒
+NAME                 READY   STATUS        RESTARTS   AGE
+pod/example-at-pod   0/1     Completed     0          46s
 
-$ kubectl记录example-at-pod
-SUMMER
-```
-
-完成自定义控制器的开发后，使用此处所示的本地模式，您可能希望从中构建容器图像。随后可以使用该自定义控制器容器映像，例如，在Kubernetes部署中。您可以使用以下命令生成容器图像：
-
-```
-$ operator-sdk build $REGISTRY/ PROJECT / IMAGE
+$ kubectl logs example-at-pod
+YAY
 ```
 
-这里 是了解更多有关Operator SDK及其示例的更多资源：
+以上我们完成自定义控制器的开发后，并在本地执行。您可能希望将operator构建成镜像，在Kubernetes部署。可以使用以下命令生成容器镜像：
+
+```shell
+$ operator-sdk build $REGISTRY/PROJECT/IMAGE
+```
+
+这里是有关Operator SDK及其示例的更多资源：
 
 - Toader Sebastian在BanzaiCloud上发表的[“Kubernetes Operator SDK完整指南”](http://bit.ly/2RqkGSf)
-- Rob Szumski的博客文章[“为Prometheus和Thanos建立一个Kubernetes运营商”](http://bit.ly/2KvgHmu)
-- 来自Cloudark on ITNEXT的[“改善可用性的Kubernetes运营商开发指南”](http://bit.ly/31P7rPC)
+- Rob Szumski的博客文章[“Building a Kubernetes Operator for Prometheus and Thanos”](http://bit.ly/2KvgHmu)
+- 来自Cloudark on ITNEXT的[“Kubernetes Operator Development Guidelines for Improved Usability”](http://bit.ly/31P7rPC) 
 
-为了总结本章，我们来看一些编写自定义控制器和运算符的替代方法。
+为了总结本章，我们来看一些编写自定义控制器和operator的替代方法。
 
 # 其他方法
 
-在 除了我们讨论过的方法之外，或者可能与之相结合，您可能需要查看以下项目，库和工具：
+除了我们讨论过的方法之外，您可以看看以下项目，库和工具：
 
 - [Metacontroller](https://metacontroller.app/)
 
-  该Metacontroller的基本思想是为您提供状态和变化的声明性规范，与JSON接口，基于级别触发的协调循环。也就是说，您将收到描述观察状态的JSON并返回描述所需状态的JSON。这对于在Python或JavaScript等动态脚本语言中快速开发自动化特别有用。除了简单的控制器，Metacontroller还允许您将API组合成更高级别的抽象 - 例如，[BlueGreenDeployment](http://bit.ly/31KNTfi)。
+  Metacontroller的基本思想是为您提供状态和变化的声明性规范，使用JSON接口，基于级别触发的协调循环。也就是说，您将收到描述观察状态的JSON并返回描述所需状态的JSON。这对于在Python或JavaScript等动态脚本语言中快速开发自动化特别有用。除了简单的控制器，Metacontroller还允许您将API组合成更高级别的抽象 - 例如，[BlueGreenDeployment](http://bit.ly/31KNTfi)。
 
-- [EVERYWHERE](https://kudo.dev/)
+- [KUDO](https://kudo.dev/)
 
-  类似对于Metacontroller，KUDO提供了一种声明性方法来构建Kubernetes运算符，涵盖整个应用程序生命周期。简而言之，它是Mesosphere从Apache Mesos框架体验到Kubernetes的经验。KUDO高度自以为是，但也易于使用，几乎不需要编码; 实质上，您必须指定的是Kubernetes清单的集合，其中包含用于定义何时执行的内置逻辑。
+  类似对于Metacontroller，KUDO提供了一种声明性方法来构建Kubernetes operator，涵盖整个应用程序生命周期。简而言之，是Mesosphere将Apache Mesos框架经验迁移到了Kubernetes。KUDO易于使用，几乎不需要编码; 实质上，您必须指定的是Kubernetes 配置清单的集合，其中包含了何时执行等内置逻辑。
 
 - [Rook操作工具包](http://bit.ly/2J34faw)
 
-  这个是一个实现运营商的通用库。它起源于Rook运营商，但已被分拆成一个独立的独立项目。
+  这个是一个实现operator的通用库。它起源于Rook Operator，现在已被分拆成一个独立项目。
 
 - [ericchiang / K8S](http://bit.ly/2ZHc5h0)
 
-  这个是使用Kubernetes协议缓冲支持生成的Eric Chiang精简的Go客户端。它的行为类似于官方的Kubernetes `client-go`，但只导入两个外部依赖项。虽然它有一些限制 - 例如，在[集群访问配置方面](http://bit.ly/2ZBQIxh) - 它是一个简单易用的Go包。
+  这是一个由Eric Chiang精简的Go客户端，使用Kubernetesprotobuf协议。它的行为类似于官方的Kubernetes `client-go`，但只导入两个外部依赖项。虽然它有一些限制(例如，在[集群访问配置方面](http://bit.ly/2ZBQIxh))它是一个简单易用的Go包。
 
 - [`kutil`](http://bit.ly/2Fq3ojh)
 
-  AppsCode通过提供Kubernetes `client-go`附加组件`kutil`。
+  AppsCode通过`kutil`提供Kubernetes `client-go`附加组件。
 
 - 基于CLI客户端的方法
 
-  一个客户端方法，主要用于实验和测试，是以`kubectl`编程方式利用（例如，[kubecuddler](http://bit.ly/2L3CDoi)库）。
+  一个客户端方法，主要用于实验和测试，是以编程方式使用用`kubectl`（例如，[kubecuddler](http://bit.ly/2L3CDoi)库）。
 
 ###### 注意
 
-虽然我们专注于使用本书中的Go编程语言编写运算符，但您可以使用其他语言编写运算符。二值得注意的例子是Flant的[Shell-operator](http://bit.ly/2ZxkZ0m)，它使您能够在良好的旧shell脚本中编写运算符，以及Zalando的[Kopf（Kubernetes运算符框架）](http://bit.ly/2WRXU6Q)，Python框架和库。
+虽然在本书中主要介绍了使用Go编程语言编写operator，但您也可以使用其他语言编写。两个值得关注的例子是Flant创建的[Shell-operator](http://bit.ly/2ZxkZ0m)，它使您能够在shell脚本中编写operator，以及Zalando创建的[Kopf（Kubernetes运算符框架）](http://bit.ly/2WRXU6Q)，一个Python框架和库。
 
-正如本章开头所提到的，运营商领域正在迅速发展，越来越多的从业者以代码和最佳实践的形式分享他们的知识，因此请关注这里的新工具。请一定要看看网上资源和论坛，比如`#kubernetes-operators`，`#kubebuilder`和`#client-go-docs`渠道上Kubernetes松弛，学习新的方法和/或讨论问题，当你被卡住得到帮助。
+正如本章开头所提到的，operator领域正在迅速发展，越来越多的参与者以代码和最佳实践的形式分享他们的知识，因此请关注这里的新工具。请一定要看看网上资源和论坛，比如`#kubernetes-operators`，`#kubebuilder`和`#client-go-docs`等Kubernetes Slack 上的频道，学习新的方法、讨论问题，当遇到困难时得到帮助。
 
-# 吸收和未来方向
+# 未来方向
 
-评委们仍然认为编写运算符的方法将是最受欢迎和广泛使用的。在Kubernetes项目的背景下，在CR和控制器方面，有几个SIG的活动。主要利益相关者是SIG [API Machinery](http://bit.ly/2RuTPEp)，它拥有CR和控制器，负责[Kubebuilder](http://bit.ly/2I8w9mz)项目。运营商SDK已经加大了与Kubebuilder API的协调力度，因此存在很多重叠。
+目前operator开发仍然被认为将是最受欢迎和广泛使用的方式。在Kubernetes生态中，在CR和控制器方面，有几个特殊兴趣小组。最主要的是SIG [API Machinery](http://bit.ly/2RuTPEp)，目前它拥有CR和控制器，负责[Kubebuilder](http://bit.ly/2I8w9mz)项目。operator SDK已经努力在与Kubebuilder API的对齐，因此你也会看到很多重合的地方。
 
-# 摘要
+# 总结
 
-在本章中，我们了解了不同的工具，使您可以更有效地编写自定义控制器和运算符。传统上，跟随它`sample-controller`是唯一的选择，但是使用Kubebuilder和Operator SDK，您现在有两个选项可以让您专注于自定义控制器的业务逻辑而不是处理样板。幸运的是，这两个工具共享了很多API和代码，因此从一个工具转移到另一个工具应该不会太困难。
+在本章中，我们了解了不同的工具，可以帮助您更有效地编写自定义控制器和operator。过去，遵循`sample-controller`是唯一的选择，但是现在可以使用Kubebuilder和Operator SDK，可以让您专注于自定义控制器的业务逻辑而不需要太多的关注于框架代码。另外一点幸运的是，这两个工具共享了很多API和代码，因此从一个工具转移到另一个工具也会比较方便。
 
-现在，让我们看看如何提供我们的劳动成果 - 即如何打包和运送我们一直在编写的控制器。
+现在，让我们看看如何发布我们的劳动成果 - 即如何打包和发布我们本章编写的控制器。
 
 [1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch06.html#idm46336858995208-marker)我们只在这里展示相关部分; 函数本身有很多其他的样板代码，我们并不关心它们。
