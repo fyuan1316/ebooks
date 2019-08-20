@@ -1,20 +1,20 @@
-# 第7章运输控制器和操作员
+# 第7章发布控制器和Operators
 
-现在您已经熟悉了自定义控制器的开发，接下来我们将讨论如何使您的自定义控制器和操作员准备就绪的主题。在本章中，我们将讨论控制器和操作员的操作方面，向您展示如何打包它们，引导您完成在生产中运行控制器的最佳实践，并确保您的扩展点不会破坏您的Kubernetes集群，安全性，或表现方面。
+现在您已经熟悉了自定义控制器的开发，接下来我们将讨论如何使您的自定义控制器和operators在生产中使用。在本章中，我们将讨论控制器和operator的操作运行方面，演示如何打包它们，引导您完成在生产中使用控制器的最佳实践，并确保您的这个扩展不会破坏Kubernetes集群的安全和性能。
 
 # 生命周期管理和包装
 
-在本节我们考虑运营商的生命周期管理。也就是说，我们将讨论如何打包和运送您的控制器或操作员，以及如何处理升级。当您准备将运营商发送给用户时，您需要一种方法来安装它。为此，您需要打包相应的工件，例如定义控制器二进制文件的YAML清单（通常作为Kubernetes部署），以及CRD和安全相关资源，例如服务帐户和必要的RBAC权限。一旦您的目标用户运行某个版本的运营商，您还需要有一个机制来升级控制器，考虑版本控制和潜在的零停机升级。
+在本节我们考虑operator的生命周期管理。也就是说，我们将讨论如何打包和发布您的控制器或operator，以及如何进行升级。当您准备将operator发送给用户时，您需要提供一种安装方法。为此，您需要打包相应的组件，例如YAML配置清单来描述控制器可执行程序如何部署（通常定义一个Kubernetes deployment），以及CRD清单和安全相关资源配置清单，例如service account和必要的RBAC权限。一旦您的目标用户开始使用运行某个版本的operator，您还需要有一个机制来升级它，考虑版本控制和潜在的平滑升级。
 
-让我们从最简单的结果开始：打包和交付控制器，以便用户可以直接安装它。
+让我们从最简单的开始：打包和交付operator，以便用户可以直接安装它。
 
-## 包装：挑战
+## 打包：挑战
 
-而Kubernetes定义带有清单的资源，通常用YAML编写，一个声明资源状态的低级接口，这些清单文件都有缺点。最重要的是在包装容器化应用程序的背景下，YAML清单是静态的; 也就是说，YAML清单中的所有值都是固定的。这意味着，如果要更改[部署清单中](http://bit.ly/2WZ1uRD)的容器映像，则必须创建新清单。
+Kubernetes通过在一个配置清单中声明对资源的需求，通常清单用YAML编写，用YAML文件来进行资源声明也有一些缺点。例如，在对容器化应用程序打包时，YAML清单是静态的，所有值都是固定的。这意味着，如果要更改[部署清单中](http://bit.ly/2WZ1uRD)的容器映像，则必须创建一个新YAML清单。
 
-让我们看一个具体的例子。假设您在名为*mycontroller.yaml*的YAML清单中编码了以下Kubernetes部署，表示您希望用户安装的自定义控制器：
+让我们看一个具体的例子。假设您在名为*mycontroller.yaml*的YAML清单中声明了以下Kubernetes deployment，用来安装用户的自定义控制器：
 
-```
+```yaml
 apiVersion: apps/v1beta1
 kind: Deployment
 metadata:
@@ -36,19 +36,19 @@ spec:
           value: eu-west-1
 ```
 
-想象一下，环境变量`REGION`定义了控制器的某些运行时属性，例如托管服务网格等其他服务的可用性。换句话说，虽然默认值`eu-west-1`可能是合理的，但用户可以并且可能会根据自己的偏好或策略覆盖它。
+想象一下，环境变量`REGION`定义了控制器的某些运行时属性，例如托管服务等其他服务的可用性。换句话说，虽然默认值`eu-west-1`可能是合适的，但用户应该可以根据自己的需要来覆盖它。
 
-现在，鉴于YAML清单*mycontroller.yaml*本身是一个静态文件，其中包含在编写时定义的所有值 - 并且客户端（例如`kubectl`本身不支持清单中的变量部分） - 如何使用户能够提供变量值或在运行时覆盖现有值？也就是说，在前面的例子中，用户可以设置`REGION`为，例如，`us-east-2`何时使用它们进行安装（例如）`kubectl apply`？
+现在，由于YAML清单*mycontroller.yaml*本身是一个静态文件，其中所有值都是在编写时定义好的 （并且像`kubectl`这种客户端本身不支持对清单中的内容进行改变），那么如何满足用户想通过变量覆盖的方式替换清单中的值呢？例如前面的例子中，用户可以在运行时设置`REGION`值为`us-east-2`？
 
-克服构建时间，静态的这些限制 YAML在Kubernetes中显示，有一些选项可以模拟清单（例如Helm）或以其他方式启用变量输入（Kustomize），具体取决于用户提供的值或运行时属性。
+解决Kubernetes部署时，YAML清单静态值的限制，有一些模板化的工具可以选择（例如Helm）或是可以在执行时接收用户提供值或运行时属性的Kustomize。
 
-## 舵
+## Helm
 
-[头盔](https://helm.sh/)，哪个自称是Kubernetes *的*软件包经理，最初由Deis开发，现在是一个云计算本地计算基金会（[CNCF](https://www.cncf.io/)）项目，主要贡献者来自微软，谷歌和Bitnami（现在是VMware的一部分）。
+[Helm](https://helm.sh/)，自称是Kubernetes 的软件包管理工具，最初由Deis开发，现在是一个云原生计算基金会（[CNCF](https://www.cncf.io/)）项目，主要贡献者来自微软，谷歌和Bitnami（现在是VMware的一部分）。
 
-舵通过定义和应用所谓的图表，有效地参数化YAML清单，帮助您安装和升级Kubernetes应用程序。以下是[示例图表模板](http://bit.ly/2XmLk3R)的摘录：
+Helm通过定义和使用所谓的charts，有效地参数化YAML清单，帮助您安装和升级Kubernetes应用程序。以下是[示例charts模板](http://bit.ly/2XmLk3R)的摘录：
 
-```
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,51 +77,51 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
 ```
 
-如您所见，变量以`{{ ._Some.value.here_ }}`格式编码，恰好是[Go模板](http://bit.ly/2N2Q3DW)。
+如您所见，变量写成`{{ ._Some.value.here_ }}`格式，与[Go模板](http://bit.ly/2N2Q3DW)一样。
 
-要安装图表，可以运行该`helm install`命令。虽然Helm有多种查找和安装图表的方法，但最简单的方法是使用官方稳定图表之一：
+安装chart，可以运行`helm install`命令。虽然Helm有多种查找和安装charts的方法，但其中最简单的方法是使用官方稳定的chart：
 
-```
+```shell
 # get the latest list of charts:
-$ 掌舵回购更新
+$ helm repo update
 
 # install MySQL:
-$ helm install stable / mysql
-释放微笑企鹅
+$ helm install stable/mysql
+Released smiling-penguin
 
 # list running apps:
-$ 掌舵ls
-名称版本更新状态图表
-微笑 - 企鹅   1         星期三9月2812:59:46 2016  部署mysql-0.1.0
+$ helm ls
+NAME             VERSION   UPDATED                   STATUS    CHART
+smiling-penguin  1         Wed Sep 28 12:59:46 2016  DEPLOYED  mysql-0.1.0
 
 # remove it:
-$ 掌舵删除微笑 - 企鹅
-去掉了微笑的企鹅
+$ helm delete smiling-penguin
+Removed smiling-penguin
 ```
 
-为了打包控制器，您需要为它创建一个Helm图表并将其发布到某个地方，默认情况下将其发布到索引并可通过[Helm Hub](https://hub.helm.sh/)访问的公共存储库，[如图7-1所示](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#helm-hub)。
+为了打包控制器，您需要为它创建一个Helm chart并将其发布到某个地方，默认情况下将其发布到[Helm Hub](https://hub.helm.sh/)访问公共存储库，[如图7-1所示](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#helm-hub)。
 
 ![Helm Hub屏幕截图，显示公开的Helm图表](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0701.png)
 
-###### 图7-1。Helm Hub屏幕截图显示了公开的Helm图表
+###### 图7-1。Helm Hub屏幕截图显示了公开的Helm charts
 
-有关如何创建Helm图表的进一步指导，请在闲暇时仔细阅读以下资源：
+关于进一步了解如何创建Helmchart，可阅读以下资源：
 
-- Bitnami的优秀文章[“如何创建你的第一个头盔图”](http://bit.ly/2ZIlODJ)。
-- [“](http://bit.ly/2KzwLDY)如果要将图表保留在自己的组织中，请[使用S3作为Helm存储库”](http://bit.ly/2KzwLDY)。
-- Helm官方文档：[“图表最佳实践指南”](http://bit.ly/31GbayW)。
+- Bitnami发布的一片文章 [“How to Create Your First Helm Chart”](http://bit.ly/2ZIlODJ)
+- 如果要将图表保留在自己的组织中，请[使用S3作为Helm存储库”](http://bit.ly/2KzwLDY)。
+- Helm官方文档：[“chart最佳实践指南”](http://bit.ly/31GbayW)。
 
-Helm很受欢迎，部分原因是它最终用户易于使用。然而，一些人认为目前的Helm架构带来了[安全风险](http://bit.ly/2WXM5vZ)。好消息是社区正在积极致力于解决这些问题。
+Helm很受欢迎，部分原因是它的易用性。然而，一些人认为目前的Helm架构有一些[安全风险](http://bit.ly/2WXM5vZ)。好消息是社区正在积极致力于解决这些问题。
 
 ## Kustomize
 
-[Kustomize](https://kustomize.io/)提供Kubernetes清单文件配置自定义的声明性方法，遵循熟悉的Kubernetes API。它于[2018年中期推出，](http://bit.ly/2L5Ec5f)现在是Kubernetes SIG CLI项目。
+[Kustomize](https://kustomize.io/) 遵循熟悉的Kubernetes API，提供一种声明性方法来配置Kubernetes清单文件。它于[2018年中期推出，](http://bit.ly/2L5Ec5f)现在是Kubernetes SIG CLI项目。
 
-你可以[安装](http://bit.ly/2Y3JeCV)你的机器上Kustomize，作为一个独立的，或者，如果你有一个较新的`kubectl`版本（比1.14更新），它被[运](http://bit.ly/2IEYqRG)与`kubectl`和与激活的`-k`命令行标志。
+你可以本机[安装](http://bit.ly/2Y3JeCV)Kustomize，或者，如果你有一个较新的`kubectl`版本（1.14以上），它被[集成](http://bit.ly/2IEYqRG)在`kubectl`工具中通过`-k`命令启用。
 
-因此，Kustomize允许您自定义原始YAML清单文件，而无需触及原始清单。但是这在实践中如何运作？我们假设您要打包我们的`cnat`自定义控制器; 你定义了一个名为*kustomize.yaml*的文件，它看起来像：
+Kustomize允许您对原始YAML清单文件自定义，而无需修改原始清单。这是如何做到的呢？我们假设您要打包`cnat`自定义控制器; 你定义了一个名为*kustomize.yaml*的文件，它看起来像：
 
-```
+```yaml
 imageTags:
   - name: quay.io/programming-kubernetes/cnat-operator
     newTag: 0.1.0
@@ -129,9 +129,9 @@ resources:
 - cnat-controller.yaml
 ```
 
-现在，您可以将此应用于*cnat-controller.yaml*文件，例如，使用以下内容：
+现在，您可以将此应用于*cnat-controller.yaml*文件，使用以下内容：
 
-```
+```yaml
 apiVersion: apps/v1beta1
 kind: Deployment
 metadata:
@@ -148,9 +148,9 @@ spec:
         image: quay.io/programming-kubernetes/cnat-operator
 ```
 
-使用`kustomize build`和保留*cnat-controller.yaml*文件不变！ - 然后输出：
+使用`kustomize build`（*cnat-controller.yaml*文件将保持不变！） - 然后输出：
 
-```
+```yaml
 apiVersion: apps/v1beta1
 kind: Deployment
 metadata:
@@ -167,49 +167,49 @@ spec:
         image: quay.io/programming-kubernetes/cnat-operator:0.1.0
 ```
 
-该`kustomize build`例如，can的输出可以在`kubectl apply`命令中使用，并自动为您应用所有[自定义](http://bit.ly/2LbCDTr)。
+`kustomize build`可以自动将所有的[自定义](http://bit.ly/2LbCDTr)值替换，它的输出可以作为`kubectl apply`命令的输入，
 
-有关Kustomize的更详细的演练以及如何使用它，请查看以下资源：
+有关Kustomize的更详细的演示以及使用方法，请查看以下资源：
 
-- SébastienGoasguen的博文[“使用kustomize配置Kubernetes应用程序”](http://bit.ly/2JbgJOR)。
-- Kevin Davin的帖子[“Kustomize-在Kubernetes做模板的正确方法”](http://bit.ly/2JpJgPm)。
-- 视频[“TGI Kubernetes 072：Kustomize和朋友”](http://bit.ly/2XoHm6C)，在那里你可以看到Joe Beda应用它。
+- SébastienGoasguen的博文[“Configuring Kubernetes Applications with kustomize"](http://bit.ly/2JbgJOR).
+- Kevin Davin的帖子[“Kustomize—The right way to do templating in Kubernetes”](http://bit.ly/2JpJgPm).
+- 视频[“TGI Kubernetes 072：Kustomize和朋友们”](http://bit.ly/2XoHm6C)，在那里你可以看到Joe Beda如何使用它。
 
-鉴于Kustomize的原生支持，`kubectl`越来越多的用户可能会采用它。请注意，虽然它解决了一些问题（自定义），但生命周期管理的其他方面（如验证和升级）可能需要您将Kustomize与Google的[CUE](http://bit.ly/32heAZl)等语言一起使用。
+考虑到Kustomize在`kubectl`中的原生支持，越来越多的用户可能会采用它。请注意，虽然它解决了一些自配置清单的定制化问题，但生命周期管理的其他方面（如验证和升级）可能需要您将Kustomize与其他一些技术一起使用，比如Google的[CUE](http://bit.ly/32heAZl)等语言。
 
-为了总结这个包装主题，让我们回顾一下从业者使用的其他一些解决方案。
+为了总结打包这个主题，让我们回顾一下大家使用的其他一些解决方案。
 
-## 其他包装选项
+## 其他打包选项
 
-一些上述包装选择的显着替代品 - 以及[野外](http://bit.ly/2X553FE)的许多其他选择：
+一些常见的打包选择 - 以及[新兴](http://bit.ly/2X553FE)的选择：
 
 - UNIX工具
 
-  在为了定制原Kubernetes舱单的值，你可以使用一系列的CLI工具，如`sed`，`awk`或`jq`在shell脚本。这是一种流行的解决方案，至少在Helm到来之前，可能是最广泛使用的选项 - 尤其是因为它最大限度地减少了依赖性，并且在* nix 环境中相当便携。
+  在为了实现对原Kubernetes清单值定制，你可以在shell脚本中使用一系列的命令行工具，如`sed`，`awk`或`jq`。这是一种比较流行的解决方案，至少在Helm出现之前，也可能是最广泛选择 - 因为它最大限度地减少了依赖性，并且在* nix 环境中相当便携。
 
 - 传统的配置管理系统
 
-  You 可以使用任何传统的配置管理系统（例如Ansible，Puppet，Chef或Salt）来打包和交付您的操作员。
+  您可以使用任何传统的配置管理系统（例如Ansible，Puppet，Chef或Salt）来打包和交付您的operator。
 
-- 云本地语言
+- 云原生语言
 
-  一个新一代所谓的[云原生编程语言](http://bit.ly/2Rwh5lu)，如Pulumi和Ballerina，允许Kubernetes原生应用程序的打包和生命周期管理等。
+  新一代所谓的[云原生编程语言](http://bit.ly/2Rwh5lu)，如Pulumi和Ballerina，提供对Kubernetes原生应用程序的打包和生命周期管理等。
 
-- [平均总评分](https://get-ytt.io/)
+- [ytt](https://get-ytt.io/)
 
-  和`ytt`你在一起还有一个YAML模板工具的另一个选项，它使用的语言本身就是Google配置语言[Starlark](http://bit.ly/2NaqoJh)的修改版本。它在YAML结构上进行语义操作，并侧重于可重用性。
+  ytt是另外一个YAML模板工具，它本身就是Google配置语言[Starlark](http://bit.ly/2NaqoJh)的改版。它在YAML结构上进行语义操作，并侧重于可重用性。
 
 - [Ksonnet](https://ksonnet.io/)
 
-  一个 用于Kubernetes清单的配置管理工具，最初由Heptio（现在的VMware）开发，Ksonnet已被弃用，并且不再积极工作，因此使用它需要您自担风险。
+  一个 用于Kubernetes清单的配置管理工具，最初由Heptio（现在的VMware）开发，Ksonnet已被弃用，并且不再更新，因此使用它需要您自担风险。
 
-阅读更多关于Jesse Suen的帖子[“Kubernetes配置管理状态：一个未解决的问题”中](http://bit.ly/2N9BkXM)讨论的选项。
+阅读更多关于Jesse Suen的帖子[“Kubernetes配置管理状态：一个未解决的问题”中](http://bit.ly/2N9BkXM)的讨论。
 
-现在我们已经讨论了一般的包装选项，让我们来看看包装和运输控制器和操作员的最佳实践。
+现在我们已经讨论了常见的打包方式，让我们来看看打包和发布制器和operator的最佳实践。
 
-## 包装最佳实践
+## 打包的最佳实践
 
-什么时候打包并发布您的运营商，确保您了解以下最佳做法。无论您选择哪种机制（Helm，Kustomize，shell脚本等），这些都适用：
+当您打包并发布operator时，请确保您了解以下最佳做法。无论您选择哪种机制（Helm，Kustomize，shell脚本等），这些都适用：
 
 - 提供适当的访问控制设置：这意味着在最小权限的基础上为控制器定义专用服务帐户以及RBAC权限; 有关详细信息，请参阅[“获得权限”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#crds-rbac)。
 - 考虑自定义控制器的范围：它会在一个命名空间或多个命名空间中查看CR吗？查看[Alex Ellis](http://bit.ly/2ZHd5S7)关于不同方法的利弊[的Twitter对话](http://bit.ly/2ZHd5S7)。
