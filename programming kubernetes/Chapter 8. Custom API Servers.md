@@ -1,43 +1,43 @@
 # 第8章自定义API服务器
 
-如作为CustomResourceDefinitions的替代方案，您可以使用自定义API服务器。自定义API服务器可以使用与主Kubernetes API服务器相同的方式为API组提供资源。与CRD相比，使用自定义API服务器几乎没有任何限制。
+作为CustomResourceDefinitions的替代方案，您可以使用自定义API服务器。自定义API服务器可以使用与主Kubernetes API服务器相同的方式为API组提供资源。与CRD相比，使用自定义API服务器几乎没有任何限制。
 
-本章首先列出了CRD可能不适合您的用例的一些原因。它描述了聚合模式，可以使用自定义API服务器扩展Kubernetes API表面。最后，您将学习使用Golang实际实现自定义API服务器。
+本章首先列出了CRD的一些局限性。通过聚合模式，可以使用自定义API服务器扩展Kubernetes API接口。最后，您将学习使用Golang实现一个自定义API服务器。
 
 # 自定义API服务器的用例
 
-一个可以使用自定义API服务器代替CRD。它可以完成CRD可以做的所有事情，并提供几乎无限的灵活性。当然，这需要付出代价：开发和运营的复杂性。
+一个自定义API服务器可以代替CRD。它可以完成CRD可以做的所有事情，并提供几乎无限的灵活性。当然，这额外付出代价是：提升了开发和维护的复杂性。
 
-让我们看一下截至本文撰写时CRD的一些限制（当Kubernetes 1.14是稳定版本时）。会议厅文件：
+让我们看一下截至本文撰写时CRD的一些限制（当前Kubernetes 1.14是一个稳定版本）。CRDs：
 
-- 用`etcd`他们的存储介质（或任何Kubernetes API服务器使用）。
+- 用`etcd`做他们的存储介质（或任何Kubernetes API服务器使用的存储，这是由API服务器决定的）。
 - 不支持protobuf，只支持JSON。
 - 仅支持两种子资源：*/ status*和*/ scale*（参见[“子资源”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#crd-subresources)）。
-- 不支持优雅删除。[1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853170760)终结器可以模拟此但不允许自定义优雅的删除时间。
-- 显着增加Kubernetes API服务器的CPU负载，因为所有算法都以通用方式实现（例如，验证）。
-- 仅为API端点实现标准CRUD语义。
-- 做不支持同居资源（即不同API组中的资源或共享存储的不同名称的资源）。[2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853165528)
+- 不支持优雅删除。[1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853170760)可以通过Finalizers模拟，但不允许设置自定义的优雅删除时间。
+- 显著增加了Kubernetes API服务器的CPU负载，因为所有算法都以通用方式实现（例如，验证）。
+- 对于API请求端点只实现了标准CRUD语义。
+- 做不支持资源的共享存储（即不同API组中或不同名称的资源可以共享存储）。[2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853165528)
 
-一个相反，自定义API服务器没有这些限制。自定义API服务器：
+相反，自定义API服务器没有这些限制。自定义API服务器：
 
-- 可以使用任何存储介质。有自定义API服务器，例如：
-  - 所述[度量API服务器](http://bit.ly/2FvgfAV)，其存储数据在内存中的最大性能
-  - API服务器镜像[OpenShift中](http://redhat.com/openshift)的Docker注册表
-  - API服务器写入时间序列数据库
-  - API服务器镜像云API
-  - API服务器镜像其他API对象，例如[OpenShift](http://redhat.com/openshift)中反映Kubernetes命名空间的项目
-- 可以像所有本地Kubernetes资源一样提供protobuf支持。为此，您必须使用[go-to-protobuf](http://bit.ly/31OLSie)创建一个*.proto*文件，然后使用protobuf编译器生成序列化程序，然后将其编译为二进制文件。`protoc`
-- 可以提供任何自定义子资源; 例如，Kubernetes API服务器提供*/ exec*，*/ logs*，*/ port-forward*等，其中大多数使用非常自定义的协议，如WebSockets或HTTP / 2流。
-- 可以像Kubernetes对pod一样实现优雅删除。`kubectl`等待删除，用户甚至可以提供 定制优雅的终止期。
-- 可以使用Golang以最有效的方式实现所有操作，如验证，准入和转换，而无需通过webhook往返，这会增加进一步的延迟。这对于高性能用例或者存在大量对象很重要。想想拥有数千个节点的巨大集群中的pod对象，以及两个数量级的pod。
-- 可以实现自定义语义，例如核心v1 `Service`类型中的服务IP的原子预留。在创建服务时，分配并直接返回唯一的服务IP。在某种程度上，像这样的特殊语义当然可以通过准入webhooks来实现（参见[“Admission Webhooks”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch09.html#admission-webhooks)），尽管这些webhooks永远无法可靠地知道传递的对象是否实际创建或更新：它们被乐观地调用，但是稍后请求管道中的步骤可能会取消请求。换句话说：webhook中的副作用很棘手，因为如果请求失败，则没有撤消触发器。
-- 可以提供具有公共存储机制（即，公共`etcd`密钥路径前缀）的资源，但是存在于不同的API组中或者以不同的方式命名。例如，Kubernetes在API组中存储部署和其他资源`extensions/v1`，然后将它们移动到更具体的API组`apps/v1`。
+- 可以使用任何存储介质。自定义API服务器，例如：
+  - [指标API服务器](http://bit.ly/2FvgfAV)，将数据存储在内存实现性能的最大化
+  - API服务器在[OpenShift中](http://redhat.com/openshift)的作为Docker registry 的镜像服务器
+  - API服务器写时间序列数据到数据库
+  - API服务器作为云API的镜像
+  - API服务器镜像其他API对象，例如[OpenShift](http://redhat.com/openshift)中的项目镜像了Kubernetes命名空间
+- 可以像所有本地Kubernetes资源一样提供protobuf支持。为此，您必须使用[go-to-protobuf](http://bit.ly/31OLSie)创建一个*.proto*文件，然后使用protobuf编译器`protoc`生成序列化程序，然后将其编译为二进制文件。
+- 可以提供任何自定义子资源; 例如，Kubernetes API服务器提供*/ exec*，*/ logs*，*/ port-forward*等，其中大多数使用自定义的协议，如WebSockets或HTTP/2流模式。
+- 可以像Kubernetes一样实现优雅删除pod。`kubectl`会等待删除，用户可以指定一个删除时间。
+- 可以使用Golang以最有效的方式实现所有操作，如验证，admission和转换，而无需通过webhook往返，这会增加进一步的延迟。这对于高性能用例或者存在大量对象很重要。想想拥有数千个节点的巨大集群中的pod对象，以及两个数量级的pod。
+- 可以实现自定义语义，例如核心组v1版本 `Service`类型中对服务IP地址的原子操作。在创建服务时，分配并直接返回唯一的服务IP。在某种程度上，这样的特殊语义可以通过admission webhooks来实现（参见[“Admission Webhooks”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch09.html#admission-webhooks)），但是这些webhooks永远无法知道传递的对象是否实际创建或更新：这种调用方式实际上是乐观的，在一系列后续的请求处理步骤中很有可能会取消请求。换句话说：webhook中的操作看起来会有副作用（它是非原子操作），因为请求很可能部分成功，而没办法撤销。
+- 可以提供具有公共存储机制（即，`etcd `通用的key前缀）的资源，但是可以时于不同的API组中或者以不同的方式命名。例如，Kubernetes在API组`extensions/v1`中存储deployment和其他资源，然后根据具体的语义将它们移动到合适的API组`apps/v1`。
 
-换句话说，自定义API服务器是CRD仍然有限的情况下的解决方案。在转换到新语义时不要破坏资源兼容性的过渡场景中，自定义API服务器通常更加灵活。
+换句话说，自定义API服务器是针对CRD局限性的一种解决方案。在转换到新语义时不破坏资源兼容性的过渡场景中，自定义API服务器通常更加灵活。
 
 # 示例：比萨餐厅
 
-至了解自定义API服务器的实现方式，在本节中，我们将介绍一个示例项目：实现比萨餐厅API的自定义API服务器。我们来看看要求。
+想要了解自定义API服务器如何实现，在本节中，我们将介绍一个示例项目：实现比萨餐厅API的自定义API服务器。我们来看看需求。
 
 我们想在`restaurant.programming-kubernetes.info`API组中创建两种类型：
 
@@ -49,9 +49,9 @@
 
   餐厅提供的比萨饼类型
 
-浇头是集群范围的资源，仅保留一个单位顶部成本的浮点值。一个实例很简单：
+topping是集群范围的资源，定义一个浮点值作为材料单价。一个简单的例子：
 
-```
+```yaml
 apiVersion: restaurant.programming-kubernetes.info/v1alpha1
 kind: Topping
 metadata:
@@ -62,7 +62,7 @@ spec:
 
 每个披萨都可以有任意数量的配料; 例如：
 
-```
+```yaml
 apiVersion: restaurant.programming-kubernetes.info/v1alpha1
 kind: Pizza
 metadata:
@@ -73,49 +73,49 @@ spec:
   - tomato
 ```
 
-排序列表是有序的（与YAML或JSON中的任何列表一样），但顺序对于类型的语义并不重要。无论如何，顾客都会得到相同的披萨。我们希望在列表中允许重复，以便允许比如带有额外奶酪的比萨饼。
+配料列表是有序的（与YAML或JSON中的任何列表一样），但在这里顺序意义并不重要。无论如何，顾客都会得到相同的披萨。我们希望列表允许重复，以便允许比如带有额外奶酪的比萨饼。
 
 所有这些都可以通过CRD轻松实现。现在让我们添加一些超出基本CRD功能的要求：[3](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853099640)
 
 - 我们希望仅允许具有相应`Topping`对象的披萨规格中的浇头。
-- 我们还想假设我们首先将此API作为`v1alpha1`版本引入，但最终了解到我们希望`v1beta1`在同一API 的版本中另外表示浇头。
+- 我们还假设我们首先将此API作为`v1alpha1`版本引入，但最终我们会提供一个`v1beta1` 版本另外一种实现。
 
-换句话说，我们希望有两个版本并在它们之间无缝转换。
+换句话说，我们希望可以在两个版本间无缝转换。
 
-可以在[本书的GitHub存储库中](http://bit.ly/2x9C3gR)找到此API作为自定义API服务器的完整实现。在本章的其余部分，我们将介绍该项目的所有主要部分并了解其工作原理。在这个过程中，您将在不同的视角中看到前一章中介绍的许多概念：即Klangnetes API服务器后面的Golang实现。CRD中强调的一些设计决策也将变得更加清晰。
+可以在[本书的GitHub存储库中](http://bit.ly/2x9C3gR)找到此API作为自定义API服务器的完整实现。接下来，我们将介绍该项目的其余部分并了解其工作原理。在这个过程中，您将在不同的视角中看到前一章中介绍的许多概念：即Kubernetes API服务器后面的Golang实现。CRD中强调的一些设计决策也将变得更加清晰。
 
-因此，即使您不打算使用自定义API服务器的路径，我们也强烈建议您仔细阅读本章。也许这里提出的概念将来也可用于CRD，在这种情况下，了解自定义API服务器将对您有用。
+因此，即使您不打算使用自定义API服务器的路径，我们也强烈建议您仔细阅读本章。也许这里提出的概念将来也可用于CRD，在这种情况下，了解自定义API服务器将对您非常有用。
 
 # 架构：聚合
 
-之前 进入技术实现细节，我们希望在Kubernetes集群的上下文中获取自定义API服务器体系结构的更高级别视图。
+在深入技术实现细节之前，我们希望从架构视角来审视一下在Kubernetes集群的自定义API服务器。
 
-自定义API服务器是为API组提供服务的进程，通常使用通用API服务器库[*k8s.io/apiserver构建*](http://bit.ly/2X3joNX)。这些进程可以在集群内部或外部运行。在前一种情况下，它们在pods内部运行，前面有一项服务。
+自定义API服务器是为API组提供服务的进程，通常使用通用API服务器库[*k8s.io/apiserver构建*](http://bit.ly/2X3joNX)。这些进程可以在集群内部或外部运行。在前一种情况下，它们在pods内部运行，前面会有一个service配合使用。
 
-该称为主Kubernetes API服务器`kube-apiserver`始终是`kubectl`其他API客户端的第一联系人。由自定义API服务器提供服务的API组由`kube-apiserver`进程代理到自定义API服务器进程。换句话说，该`kube-apiserver`进程知道所有自定义API服务器及其服务的API组，以便能够向它们代理正确的请求。
+主Kubernetes API服务器`kube-apiserver`始终是接收`kubectl`或其他API客户端的请求。那些由自定义API服务器提供服务的API组，需要由`kube-apiserver`进程将请求代理到自定义API服务器进程再进行处理。换句话说，该`kube-apiserver`进程知道所有自定义API服务器及其服务的API组，以便能够向它们正确的转发请求。
 
-该执行此代理的组件位于`kube-apiserver`进程内部并被调用[`kube-aggregator`](http://bit.ly/2X10C9W)。将API请求代理到自定义API服务器的过程称为*API聚合*。
+执行此代理操作的组件叫做[`kube-aggregator`](http://bit.ly/2X10C9W)位于`kube-apiserver`进程内部。将API请求代理到自定义API服务器的过程称为*API聚合*。
 
-让我们看一下针对自定义API服务器的请求路径，但是进入Kubernetes API服务器TCP套接字（参见[图8-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)）：
+让我们看一下访问到自定义API服务器的请求路径，但请求将首先进入Kubernetes API服务器TCP套接字（参见[图8-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)）：
 
 1. Kubernetes API服务器收到请求。
-2. 它们通过处理程序链，包括身份验证，审计日志记录，模拟，最大限度飞行限制，授权等（图中只是一个草图，并不完整）。
-3. 由于Kubernetes API服务器知道聚合API，因此它可以拦截对HTTP路径*/ apis /的aggregated-API-group-name*请求。
+2. 它将通过处理程序链，包括身份验证，审计日志记录，模拟，速率限制，授权等（图中只是一个草图，并不完整）。
+3. 由于Kubernetes API服务器知道聚合API，因此它可以拦截对HTTP路径*/apis/aggregated-API-group-name*请求。
 4. Kubernetes API服务器将请求转发给自定义API服务器。
 
 ![Kubernetes主要的API服务器`kube-apiserver`，带有集成的`kube-aggregator`](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0801.png)
 
-###### 图8-1。Kubernetes主要的API服务器kube-apiserver，带有集成的kube-aggregator
+###### 图8-1。Kubernetes主API服务器kube-apiserver，带有集成的kube-aggregator
 
-所述`kube-aggregator`的HTTP路径下代理请求的API组版本（即，一切下*的/ apis / group-name/version*）。它不必知道API组版本中实际提供的资源。
+`kube-aggregator`将会代理一个针对API组和版本的请求（即，所有/ apis / group-name/version路径下的请求）。它不需要知道API组和版本下的实际提供的资源。
 
-相反，它`kube-aggregator`为所有聚合的自定义API服务器本身提供发现端点*/ apis*和*/ apis /group-name*（它使用下一节中解释的已定义顺序）并返回结果，而不与聚合的自定义API服务器通信。相反，它使用来自`APIService`资源的信息。让我们详细看一下这个过程。
+相反，它`kube-aggregator`为所有聚合的自定义API服务器提供discovery接口/ apis*和*/apis/group-name（它会使用预先定义好的顺序，下一节中将解释）并返回结果，这里不会与聚合的自定义API服务器通信。它会使用来自`APIService`资源的信息。让我们详细看一下这个过程。
 
-## API服务
+## API Services
 
-对于要知道自定义API服务器所服务的API组的Kubernetes API服务器，`APIService`必须在`apiregistration.k8s.io/v1`API组中创建一个对象。这些对象仅列出API组和版本，而不是资源或任何进一步的详细信息：
+为了要让Kubernetes API服务器知道自定义API服务器所提供服务的API组，必须在`apiregistration.k8s.io/v1` API组中创建一个`APIService`对象。这些对象仅列出API组和版本，而不包含资源或其他进一步的详细信息：
 
-```
+```yaml
 apiVersion: apiregistration.k8s.io/v1beta1
 kind: APIService
 metadata:
@@ -132,15 +132,15 @@ spec:
   versionPriority: 20
 ```
 
-该名称是任意的，但为了清楚起见，我们建议您使用标识API组名称和版本的名称 - 例如，*group-name-version*。
+这个名称是任意的，但为了清楚起见，我们建议您使用的名称能出标识API组和版本 - 例如，*group-name-version*。
 
-该服务可以是群集中的普通[`ClusterIP`服务](http://bit.ly/2X0zEEu)，也可以是具有`ExternalName`群集外自定义API服务器的给定DNS名称的服务。在这两种情况下，端口必须是443.不支持其他服务端口（在撰写本文时）。服务目标端口映射允许任何选定的，优选非限制的更高端口用于自定义API服务器pod，因此这不是主要限制。
+该服务可以是集群中的普通[`ClusterIP`服务](http://bit.ly/2X0zEEu)，也可以是一个`ExternalName`集群外的服务，一个给定DNS名称的服务来代表自定义API服务器。在这两种情况下，端口必须设置是443。目前不支持其他服务端口（在撰写本文时）。服务的指向的目标端口没有限制，应当首选没有限制的高端口用于自定义API服务器的pod。
 
-证书颁发机构（CA）捆绑包用于Kubernetes API服务器以信任所联系的服务。请注意，API请求可以包含机密数据。为避免中间人攻击，强烈建议您设置`caBundle`字段而不使用`insecureSkipTLSVerify`替代方法。这对于任何生产群集尤其重要，包括证书轮换机制。
+CA证书用于Kubernetes API服务器信任发起连接的服务。请注意，API请求中可能包含机密数据。为避免认为的攻击，强烈建议您设置`caBundle`字段并且不使用`insecureSkipTLSVerify`。这对于生产群集尤其重要，还要考虑到证书的轮换机制。
 
-最后，`APIService`对象中有两个优先级。这些有一些棘手的语义，在Golang代码文档中描述了`APIService`类型：
+最后，`APIService`对象中有两个优先级。这里有一些语义说明，在Golang代码的注释对`APIService`类型进行了描述：
 
-```
+```go
 // GroupPriorityMininum is the priority this group should have at least. Higher
 // priority means that the group is preferred by clients over lower priority ones.
 // Note that other versions of this group might specify even higher
@@ -169,13 +169,13 @@ GroupPriorityMinimum int32 `json:"groupPriorityMinimum"`
 VersionPriority int32 `json:"versionPriority"`
 ```
 
-换句话说，该`GroupPriorityMinimum`值确定组优先级的位置。如果`APIService`不同版本的多个对象不同，则最高值规则。
+换句话说，该`GroupPriorityMinimum`值确定组的优先级。如果多个`APIService`对象，可能它们的版本是不同的，这种情况下，group值最大的那个APIService 对象有效。
 
-第二个优先级只是在彼此之间对版本进行排序，以定义动态客户端要使用的首选版本。
+第二个优先级只是在组内部对版本进行排序，以决定动态客户端要使用的首选版本。
 
-以下是`GroupPriorityMinimum`本机Kubernetes API组的值列表：
+以下是`GroupPriorityMinimum`标准Kubernetes API组的值列表：
 
-```
+```go
 var apiVersionPriorities = map[schema.GroupVersion]priority{
     {Group: "", Version: "v1"}: {group: 18000, version: 1},
     {Group: "extensions", Version: "v1beta1"}: {group: 17900, version: 1},
@@ -218,43 +218,43 @@ var apiVersionPriorities = map[schema.GroupVersion]priority{
 }
 ```
 
-因此，使用`2000`类似PaaS的API意味着将它们放在此列表的末尾。[4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336852602264)
+因此，使用`2000`这样为PaaS平台API定义的Group优先级值，意味着他们的优先级最低，在列表的最后。[4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336852602264)
 
-API组的顺序在REST映射过程中起作用`kubectl`（请参阅[“REST映射”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)）。这意味着它对用户体验有实际影响。如果存在冲突的资源名称或短名称，则具有最高`GroupPriorityMinimum`值的名称将获胜。
+API组的顺序在REST mapping过程中起作用，这样就会影响到kubectl命令执行过程（请参阅[“REST映射”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#RESTMapping)）。如果资源名称或别名存在冲突，则具有最高`GroupPriorityMinimum`值的名称将生效。
 
-此外，在使用自定义API服务器替换API组版本的特殊情况下，可能会使用此优先级排序。例如，您可以通过将自定义API服务放在`GroupPriorityMinimum`值低于上表中的位置的位置，将原生Kubernetes API组替换为已修改的组（无论出于何种原因）。
+此外，在使用自定义API服务器替换标准API组版本的特殊情况下，可能会使用到此优先级排序功能。例如，您可以通过将自定义API服务的`GroupPriorityMinimum`值设置为高于原生Kubernetes API组对应的`GroupPriorityMinimum`值，这样自定义API服务器的APIService会生效。
 
-再次注意，Kubernetes API服务器不需要知道发现端点*/ apis*和*/ apis /的group-name*任何资源列表，也不需要知道代理。资源列表仅通过第三个发现端点*/ apis / group-name/返回version*。但正如我们在上一节中看到的那样，此端点由聚合的自定义API服务器提供，而不是由`kube-aggregator`。
+另外需要注意，Kubernetes API服务器不需要知道*/apis*和*/apis/group-name*这两个请求路径下的任何资源信息。资源列表信息是通过请求/apis/group-name/version此路径返回的。但正如我们在上一节中看到的那样，此端点路径由被聚合的自定义API服务器提供的，而不是`kube-aggregator`。
 
 ## 自定义API服务器的内部结构
 
-一个自定义API服务器类似于组成Kubernetes API服务器的大多数部分，当然具有不同的API组实现，并且没有嵌入式`kube-aggregator`或嵌入式`apiextension-apiserver`（为CRD提供服务）。这导致几乎相同的架构图（如图[8-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-aggregated-apiserver)所示）与[图8-1中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)的相似 ：
+一个自定义API服务器与标准Kubernetes API服务器的大部分都相同，除了它们有不同的API组实现，以及自定义API服务器没有包含kube-aggregator`和`apiextension-apiserver（为CRD提供服务）。所以在下方（如图[8-2](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-aggregated-apiserver)所示）我们会看到几乎与[图8-1中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)的相似的架构图 ：
 
 ![基于k8s.io/apiserver的聚合自定义API服务器](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0802.png)
 
 ###### 图8-2。基于k8s.io/apiserver的聚合自定义API服务器
 
-我们观察了很多事情。聚合API服务器：
+从聚合API服务器架构图中，我们可以发现：
 
-- 具有与Kubernetes API服务器相同的基本内部结构。
-- 有它自己的 处理程序链，包括身份验证，审计， 模拟，最大限度飞行限制和授权（我们将在本章中解释为什么这是必要的;例如，参见[“委托授权”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authorization)）。
-- 有自己的资源处理程序管道，包括 解码， 转换，许可，REST映射和 编码。
-- 呼叫入场webhooks。
-- 可能会写入`etcd`（但它可以使用不同的存储后端）。`etcd`群集不必与Kubernetes API服务器使用的群集相同。
-- 有自己的自定义API组的方案和注册表实现。注册表实现可能有所不同，并可在任何程度上进行定制
-- 再次验证。它通常执行客户端证书身份验证和基于令牌的身份验证，并通过`TokenAccessReview`请求回调Kubernetes API服务器。我们将在稍后更详细地讨论身份验证和信任体系结构。
-- 有自己的审计。这意味着Kubernetes API服务器会审核某些字段，但仅限于元级别。对象级审计在聚合的自定义API服务器中完成。
-- 使用`SubjectAccessReview`对Kubernetes API服务器的请求进行自己的身份验证。我们将在稍后详细讨论授权。
+- 具有与Kubernetes API服务器基本相同的内部结构。
+- 有它自己的 处理程序链，包括身份验证，审计， 模拟，速率限制和授权（本章中将解释此举的必要性;例如，参见[“委托授权”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authorization)）。
+- 有自己的资源处理流程，包括 解码， 转换，admission，REST Mapping和 编码。
+- 调用 admission webhooks。
+- 可以写入etcd`（但它也可以使用不同的存储后端）。`etcd集群不必与Kubernetes API服务器使用的集群相同。
+- 有自己的自定义API组的scheme和注册实现。注册实现方式可能不同，并可一定程序上定制。
+- 再次验证。它通常执行客户端证书身份验证和基于令牌的身份验证，并通过`TokenAccessReview`请求回调Kubernetes API服务器。我们将在稍后更详细地讨论身份验证和信任体系。
+- 有自己的审计。这意味着Kubernetes API服务器会仅在元数据级别审核某些字段。对象级审计在聚合的自定义API服务器中完成。
+- 使用`SubjectAccessReview`向Kubernetes API服务器发出请求，进行身份验证。我们将在稍后详细讨论授权。
 
-## 委托身份验证和信任
+## 委托身份认证和信任
 
-一个聚合自定义API服务器（基于[*k8s.io/apiserver*](http://bit.ly/2X3joNX)）构建在与Kubernetes API服务器相同的身份验证库上。它可以使用客户端证书或令牌来验证用户身份。
+一个聚合自定义API服务器（基于[*k8s.io/apiserver*](http://bit.ly/2X3joNX)）构建在与Kubernetes API服务器相同的身份验证库上。它可以使用客户端证书或令牌来认证用户身份。
 
-由于聚合的自定义API服务器在架构上位于Kubernetes API服务器后面（即，Kubernetes API服务器接收请求并将它们代理到聚合的自定义API服务器），因此Kubernetes API服务器已对请求进行了身份验证。所述Kubernetes API服务器存储的认证，也就是说，用户名和组成员的HTTP请求报头，通常的结果`X-Remote-User`和`X-Remote-Group`（这些可以用配置`--requestheader-username-headers`和`--requestheader-group-headers`标志）。
+由于聚合的自定义API服务器在架构上位于Kubernetes API服务器后面（即，Kubernetes API服务器接收请求并将它们代理到聚合的自定义API服务器），因此Kubernetes API服务器已对请求进行了身份验证。Kubernetes API服务器已经存储了认证信息，也就是说，用户名和组信息通常会存在HTTP请求报头的X-Remote-User`和`X-Remote-Group字段（这些可以用配置--requestheader-username-headers`和`--requestheader-group-headers进行指定）。
 
-聚合的自定义API服务器必须知道何时信任这些标头; 否则，任何其他呼叫者可以声称已完成身份验证并可以设置这些标头。这由特殊请求标头客户端CA处理。它存储在配置映射*kube-system / extension-apiserver-authentication*（filename *requestheader-client-ca-file*）中。这是一个例子：
+聚合的自定义API服务器必须知道是否该信任这些请求; 否则，其他调用者可以通过设置同样的头信息，绕过身份验证环节。这一过程通过一个特殊请求头客户端CA来实现的。它被存储命名空间kube-system下，名为extension-apiserver-authentication的config map中（kube-system/extension-apiserver-authentication）， *requestheader-client-ca-file* 键对应的值就是其内容，下边是一个例子：
 
-```
+```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -275,34 +275,34 @@ data:
   requestheader-username-headers: '["X-Remote-User"]'
 ```
 
-使用此信息，具有默认设置的聚合自定义API服务器将进行身份验证：
+使用此信息，具有默认设置的聚合自定义API服务器将进行以下身份认证：
 
-- 使用与给定*client-ca文件*匹配的客户端证书的*客户端*
-- 由Kubernetes API服务器预先验证的客户端，其请求使用给定的*requestheader-client-ca-file*转发，其用户名和组成员身份存储在给定的HTTP头中`X-Remote-Group`，`X-Remote-User`
+- 客户端使用证书与给定*client-ca文件*进行匹配
+- Kubernetes API服务器将预先验证客户端，并在请求中携带给定的*requestheader-client-ca-file*进行转发，同时在请求HTTP头中存储用户名（`X-Remote-Group`）和组成员身份（`X-Remote-User`）。
 
-最后但并非最不重要的是，有一种称为`TokenAccessReview`前锋的机制承载令牌（通过HTTP头接收）返回Kubernetes API服务器以验证它们是否有效。默认情况下禁用令牌访问查看机制，但可以选择启用它; 请参阅[“选项和配置模式以及启动管道”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-development-options-config)。`Authorization: bearer *token*`
+此外，还有一种称为`TokenAccessReview`的机制，将bearer token（通过HTTP头Authorization: bearer token接收）转发回Kubernetes API服务器以验证它们是否有效。默认情况下该机制未启用，启用方法可参阅[“启动选项和配置选择”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-development-options-config)。
 
-我们将在以下部分中看到如何实际设置委派身份验证。虽然我们在这里详细介绍了这种机制，但在聚合的自定义API服务器中，这主要由*k8s.io/apiserver*库自动完成。但是知道幕后发生的事情肯定是有价值的，特别是在涉及安全的情况下。
+我们将在以下部分中看到如何设置代理认证。虽然我们在这里详细介绍了这种机制，但在聚合的自定义API服务器中，这主要由*k8s.io/apiserver*库自动完成。但是知道幕后发生的事情肯定是有价值的，特别是在涉及安全方面。
 
 ## 委托授权
 
-后身份验证已完成，每个请求都必须经过授权。授权基于用户名和组列表。该 Kubernetes中的默认授权机制是基于角色的访问控制（RBAC）。
+身份认证完之后，每个请求都必须经过授权。授权基于用户名和组信息。 Kubernetes中的默认授权机制是基于角色的访问控制（RBAC）。
 
-RBAC将身份映射到角色，将角色映射到授权规则，最终接受或拒绝请求。我们不会详细介绍RBAC授权对象（如角色和集群角色，角色绑定和集群角色绑定）的所有详细信息（有关详细信息，请参阅[“获取权限”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#crds-rbac)）。从架构的角度来看，知道聚合的自定义API服务器通过`SubjectAccessReview`s 授权使用委托授权就足够了。它不会评估RBAC规则本身，而是将评估委托给Kubernetes API服务器。
+RBAC将身份映射到角色，将角色映射到授权规则，最终接受或拒绝请求。我们不会详细介绍RBAC授权对象例如角色和集群角色，角色绑定和集群角色绑定的所有详细信息（有关详细信息，请参阅[“获取正确的权限”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch07.html#crds-rbac)）。从架构的角度来看，我们只需要知道聚合的自定义API服务器通过`SubjectAccessReview`s 进行授权委托。它不会自己验证RBAC规则，而是委托给Kubernetes API服务器来做。
 
-##### 为什么聚合API服务器总是需要执行另一个授权步骤
+##### 为什么聚合API服务器总是需要执行额外一个授权步骤
 
-Kubernetes API服务器收到并转发到聚合自定义API服务器的每个请求都会通过身份验证和授权（请参[见图8-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)）。这意味着聚合的自定义API服务器可以跳过此类请求的委派授权部分。
+Kubernetes API服务器收到并转发给聚合自定义API服务器的每个请求都会通过身份验证和授权（请参[见图8-1](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver)）。这意味着聚合的自定义API服务器似乎是可以跳过此类请求的委派授权部分的。
 
-但这种预授权不能保证，可能会消失在任何时候（有计划地分割`kube-aggregator`，从`kube-apiserver`更好的安全性，并在未来更好的扩展性）。此外，直接发送到聚合自定义API服务器的请求（例如，通过客户端证书或令牌访问查看进行身份验证）不会通过Kubernetes API服务器，因此未经过预授权。
+但是这种预授权不能百分百保证，有可能随时会失效（已经有计划将`kube-aggregator`，从`kube-apiserver`分离出来，从而实现更好的安全性和扩展性）。另一个原因，有一部分直接发送到聚合自定义API服务器的请求（例如，通过客户端证书或令牌进行的认证）不会通过Kubernetes API服务器，这部分是未经过预授权的。
 
-换句话说，跳过委托授权会打开一个安全漏洞，因此非常不鼓励。
+综合来看，跳过委托授权在安全方面会有漏洞，因此不鼓励这样做。
 
-现在让我们更详细地看一下委托授权。
+现在让我们更深入看一下委托授权。
 
-一个主题访问审核是根据请求从聚合的自定义API服务器发送到Kubernetes API服务器（如果它在其授权缓存中找不到答案）。以下是此类评论对象的示例：
+在一个请求中，如果聚合自定义API服务器在自己缓存的授权信息中找不到已授权信息，会将SubjectAccessReview对象发送到Kubernetes API服务器进行委托授权，以下是此对象的示例：
 
-```
+```yaml
 apiVersion: authorization.k8s.io/v1
 kind: SubjectAccessReview
 spec:
@@ -320,9 +320,9 @@ spec:
   - authors
 ```
 
-Kubernetes API服务器从聚合的自定义API服务器接收此信息，评估集群中的RBAC规则，并做出决定，返回一个`SubjectAccessReview`设置了状态字段的对象; 例如：
+Kubernetes API服务器从聚合的自定义API服务器收到该信息，通过集群中的RBAC规则验证，并做出决定，在`SubjectAccessReview`对象中设置状态字段并返回，例如：
 
-```
+```yaml
 apiVersion: authorization.k8s.io/v1
 kind: SubjectAccessReview
 status:
@@ -331,38 +331,38 @@ status:
   reason: "rule foo allowed this request"
 ```
 
-这里注意，有可能是两个`allowed`和`denied`是`false`。这意味着Kubernetes API服务器无法做出决定，在这种情况下，聚合自定义API服务器中的另一个授权者可以做出决定（API服务器实现逐个查询的授权链，委派授权是授权者之一在那个链中）。这可用于建模非标准授权逻辑 - 即，在某些情况下，如果没有RBAC规则，而是使用外部授权系统。
+这里需要注意，结果`allowed`和`denied`这两个字段都可能是`false`。这意味着Kubernetes API服务器无法做出决定，在这种情况下，聚合自定义API服务器中的下一个授权者可以继续做出决定（API服务器中提供了授权链可以逐个进行查询验证是否有权限，委托授权的授权者是整个授权链中的一环）。这样一来还可以支持更灵活的场景，例如，在某些情况下，不使用RBAC规则，而是使用外部授权系统授权。
 
-请注意，出于性能原因，委派授权机制在每个聚合自定义API服务器中维护本地缓存。默认情况下，它缓存1,024个授权条目：
+请注意，出于性能考虑，委托授权机制在每个聚合自定义API服务器内部维护一份本地缓存。默认情况下，它缓存1,024个授权条目：
 
-- `5` 允许的授权请求的分钟到期时间
-- `30` 被拒绝的授权请求的秒到期
+- 允许的授权请求到期时间是5分钟
+- 被拒绝的授权请求到期时间是30秒
 
-这些值可以通过`--authorization-webhook-cache-authorized-ttl`和自定义`--authorization-webhook-cache-unauthorized-ttl`。
+这些值可以通过`--authorization-webhook-cache-authorized-ttl`和`--authorization-webhook-cache-unauthorized-ttl`自定义。
 
-我们将在以下部分中看到如何在代码中设置委派授权。同样，与身份验证一样，在聚合的自定义API服务器内部委托授权主要由*k8s.io/apiserver*库自动完成。
+我们将在以下部分中看到如何在代码中设置委托授权。同身份认证一样，在聚合的自定义API服务器内部委托授权主要由*k8s.io/apiserver*库自动完成。
 
 # 编写自定义API服务器
 
-在在前面的部分中，我们研究了聚合API服务器的体系结构。在本节中，我们将了解Golang中聚合的自定义API服务器的实现。
+在在前面的部分中，我们研究了聚合API服务器的体系结构。在本节中，我们将了解Golang中聚合自定义API服务器的实现。
 
-主要的Kubernetes API服务器是通过*k8s.io/apiserver*库实现的。自定义API服务器将使用完全相同的代码。主要区别在于我们的自定义API服务器将在集群中运行。这意味着它可以假设`kube-apiserver`群集中有a 可用，并使用它来执行委派授权并检索其他kube-native资源。
+主Kubernetes API服务器是通过*k8s.io/apiserver*库实现的。自定义API服务器将使用完全相同的代码。主要区别在于我们的自定义API服务器将在集群中运行。这意味着它可以假设集群中已经有可用的`kube-apiserver`，可以使用它来执行委托授权或检索其他标准Kubernetes资源。
 
-我们还假设`etcd`群集可用并准备好由聚合的自定义API服务器使用。这`etcd`是专用的还是与Kubernetes API服务器共享并不重要。我们的自定义API服务器将使用不同的`etcd`密钥空间来避免冲突。
+我们还假设`etcd`集群是可以被聚合的自定义API服务器使用的。关于`etcd`是专用的还是与Kubernetes API服务器共享并不重要。我们的自定义API服务器将为`etcd`的key 使用不同的名称空间来避免冲突。
 
-本章中的代码示例引用[了GitHub上的示例代码](http://bit.ly/2x9C3gR)，因此请查看完整的源代码。我们将在此处仅显示最有趣的摘录，但您可以随时查看完整的示例项目，对其进行实验，并且非常重要的学习 - 在真实的群集中运行它。
+本章中的示例代码引用[了GitHub上的示例代码](http://bit.ly/2x9C3gR)，完整的源代码请查看GitHub。本文我们仅列出相关的代码，您可以查看完整的源代码进行学习、或在真实的集群环境中运行它。
 
-该`pizza-apiserver`项目实现了[“示例：比萨餐厅”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-example)显示的示例API 。
+`pizza-apiserver`项目实现了[“示例：比萨餐厅”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-example)的示例API 。
 
-## 选项和配置模式和启动管道
+## 启动选项和配置
 
 1. 该*k8s.io/apiserver*库使用*选项和配置模式*来创建正在运行的API服务器。
 
-我们将从几个绑定到标志的选项结构开始。从*k8s.io/apiserver*获取它们并添加我们的自定义选项。来自*k8s.io/apiserver的*选项结构可以在特殊用例的代码中进行调整，并且提供的标志可以应用于标志集以便用户可访问。
+我们将从几个启动参数开始。从*k8s.io/apiserver*下载代码并添加我们的自定义参数。*k8s.io/apiserver中的*option结构可以根据实际需求在代码中进行调整，将参数变量应用到参数集合中就可以给用户使用了。
 
-在这个[例子中，](http://bit.ly/2x9C3gR)我们非常简单地将所有内容都基于`RecommendedOptions`。这些推荐选项为简单API的“普通”聚合自定义API服务器所需的一切设置，如下所示：
+在这个[例子中，](http://bit.ly/2x9C3gR)我们将基于`RecommendedOptions`这个结构。结构中定义的选项参数定义聚合自定义API服务器所需的一切设置，如下所示：
 
-```
+```go
 import (
     ...
     informers "github.com/programming-kubernetes/pizza-apiserver/pkg/
@@ -389,17 +389,17 @@ func NewCustomServerOptions(out, errOut io.Writer) *CustomServerOptions {
 }
 ```
 
-该`CustomServerOptions`嵌入`RecommendedOptions`和顶部添加一个字段。`NewCustomServerOptions`是`CustomServerOptions`使用默认值填充结构的构造函数。
+`CustomServerOptions`中结构嵌入`RecommendedOptions`结构和并在顶部添加了一个字段。`NewCustomServerOptions`是`CustomServerOptions`结构的默认构造函数。
 
 让我们看看一些更有趣的细节：
 
-- `defaultEtcdPathPrefix`是`etcd`我们所有键的前缀。作为关键空间，我们使用*/registry/pizza-apiserver.programming-kubernetes.info*，明显不同于Kubernetes键。
-- `SharedInformerFactory`是我们自己的CR的全流程共享informer工厂，以避免相同资源的不必要的informer（参见[图3-5](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#informers-figure)）。请注意，它是从我们项目中生成的informer代码导入的，而不是从`client-go`。
-- `NewRecommendedOptions` 为具有默认值的聚合自定义API服务器设置所有内容。
+- `defaultEtcdPathPrefix`是`etcd`中所有键的前缀。作为关键字名称空间，我们使用*/registry/pizza-apiserver.programming-kubernetes.info*，从而明显区别于Kubernetes键。
+- `SharedInformerFactory`是我们为所有CR准备的共享informer工厂类，以避免同一个资源不必要的使用多个informer（参见[图3-5](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#informers-figure)）。请注意，这个informer代码是需要先通过代码生成再导入，而不是从`client-go`导入。
+- `NewRecommendedOptions` 为聚合自定义API服务器设置所有了所有默认值。
 
 我们来看看`NewRecommendedOptions`：
 
-```
+```go
 return &RecommendedOptions{
     Etcd:           NewEtcdOptions(storagebackend.NewDefaultConfig(prefix, codec)),
     SecureServing:  sso.WithLoopback(),
@@ -418,31 +418,31 @@ return &RecommendedOptions{
 }
 ```
 
-如有必要，所有这些都可以调整。例如，如果需要自定义默认服务端口，则`RecommendedOptions.SecureServing.SecureServingOptions.BindPort`可以进行设置。
+所有这些都可以调整。例如，如果需要自定义默认服务端口，可以设置`RecommendedOptions.SecureServing.SecureServingOptions.BindPort`。
 
-让我们简要介绍一下现有的内容 选项结构：
+让我们简要介绍一下现有的内容选项结构：
 
-- `Etcd`配置读写的存储堆栈`etcd`。
-- `SecureServing` 配置HTTPS周围的一切（即端口，证书等）
-- `Authentication`设置委派身份验证，如[“委派身份验证和信任”中所述](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authentication)。
-- `Authorization`按照[“委派授权”中的说明](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authorization)设置委派授权。
-- `Audit`设置审计输出堆栈。默认情况下禁用此选项，但可以将其设置为输出审核日志文件或将审核事件发送到外部后端。
-- `Features` 提供配置 alpha和beta特征的特征门。
-- `CoreAPI`保存kubeconfig文件的路径以访问主API服务器。默认使用群集内配置。
-- `Admission`是一堆变异和验证的准入插件，可以为每个传入的API请求执行。这可以通过自定义代码内准入插件进行扩展，也可以针对自定义API服务器调整默认准入链。
-- `ExtraAdmissionInitializers` 允许我们添加更多初始化者入学。初始化程序通过自定义API服务器实现例如线程或客户端的管道。有关自定义录取的更多信息，请参阅[“录取”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-development-admission)。
-- `ProcessInfo`保存事件对象创建的信息（即进程名称和命名空间）。我们已经`pizza-apiserver`为两个值设置了它。
-- `Webhook`配置webhook的操作方式（例如，身份验证和入场webhook的一般设置）。它为在集群内运行的自定义API服务器设置了良好的默认值。对于群集外部的API服务器，这将是配置它如何到达webhook的地方。
+- `Etcd`配置了用于读写的`etcd`存储。
+- `SecureServing` 配置HTTPS相关的参数（即端口，证书等）
+- `Authentication`设置委托身份验证，如[“委托身份验证和信任”中所述](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authentication)。
+- `Authorization`按照[“委托授权”中的说明](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-authorization)设置委托授权。
+- `Audit`设置审计输出。默认情况下禁用此选项，但可以将其设置为输出审核日志文件或将审核事件发送到外部后端服务。
+- `Features` 提供配置 alpha和beta特征的功能开关。
+- `CoreAPI`保存kubeconfig文件的路径用来访问主API服务器。默认使用群集内配置。
+- `Admission`是一些修改和验证的admission插件，可以应用到每个传入的API请求。可以通过自定义代码方式扩展admission插件，也可以针对自定义API服务器调整默认admission链。
+- `ExtraAdmissionInitializers` 允许我们添加更多initializer。初始化程序给自定义API服务器定义需要初始化的informer和客户端。有关自定义admission的更多信息，请参阅[“admission”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-development-admission)。
+- `ProcessInfo`保存事件对象创建的信息（即进程名称和命名空间）。我们已经在`pizza-apiserver`进行了设置。
+- `Webhook`配置webhook的操作方式（例如，身份认证和admission webhook的相关设置）。它为在集群内运行的自定义API服务器初始化好默认值。对于集群外部的API服务器，这将配置它如何访问webhook。
 
-选项与标志相结合; 也就是说，它们通常与标志处于相同的抽象级别。根据经验，选项不包含“运行”数据结构。它们在启动期间使用，然后转换为配置或服务器对象，然后运行它们。
+选项与参数相结合; 也就是说，它们通常和参数处于相同的抽象级别。根据经验，选项不包含“运行时”数据。主要在启动期间被使用，然后转换为配置或服务器内的对象，然后运行。
 
-可以通过该`Validate() error`方法验证选项。此方法还将检查用户提供的标志值是否具有逻辑意义。
+选项可以通过`Validate() error`方法验证。此方法还将检查用户提供的参数值是否合法。
 
-可以完成选项以设置默认值，默认值不应显示在标志的帮助文本中，但这些默认值是获取完整选项集所必需的。
+选项可以有完成方法，以此来进行默认值设置，默认值不应显示在参数的帮助中，这些默认值对于创建完整的选项是非常必要的。
 
-通过该`Config() (*apiserver.Config, error)`方法将选项转换为服务器配置（“config”）。这是通过从推荐的默认配置开始，然后将选项应用于它来完成的：
+选项通过`Config() (*apiserver.Config, error)`方法被转换为服务器配置（“config”）。这是通过推荐配置产生配置对象，再通过调用推荐选项提供的方法来生成服务器配置：
 
-```
+```go
 func (o *CustomServerOptions) Config() (*apiserver.Config, error) {
     err := o.RecommendedOptions.SecureServing.MaybeDefaultWithSelfSignedCerts(
         "localhost", nil, []net.IP{net.ParseIP("127.0.0.1")},
@@ -467,13 +467,13 @@ func (o *CustomServerOptions) Config() (*apiserver.Config, error) {
 }
 ```
 
-这里创建的配置包含可运行的数据结构; 换句话说，配置是运行时对象，与对应于标志的选项形成对比。`o.RecommendedOptions.SecureServing.MaybeDefaultWithSelfSignedCerts`如果用户未传递预生成证书的标志，该行将创建自签名证书。
+这里创建的配置主要包含了可运行的数据; 换句话说，配置集合了运行时需要的数据，区别于选项，选项是集合了所有启动的参数。o.RecommendedOptions.SecureServing.MaybeDefaultWithSelfSignedCerts方法用于在用户未传递预签名证书时，将创建自签名证书。
 
-正如我们所描述的，`genericapiserver.NewRecommendedConfig`返回默认的推荐配置，并`RecommendedOptions.ApplyTo`根据标志（和其他自定义选项）进行更改。
+正如我们所描述的，`genericapiserver.NewRecommendedConfig`返回默认的推荐配置对象，再调用`RecommendedOptions.ApplyTo`根据参数对其进行更改。
 
-`pizza-apiserver`项目本身的配置结构只是`RecommendedConfig`我们的示例自定义API服务器的包装：
+作为自定义API服务器项目`pizza-apiserver`本身的配置结构只是对`RecommendedConfig`的包装：
 
-```
+```go
 type ExtraConfig struct {
     // Place your custom config here.
 }
@@ -500,11 +500,11 @@ type CompletedConfig struct {
 }
 ```
 
-如果需要更多运行自定义API服务器的状态，`ExtraConfig`则可以放置它。
+如果需要更定义更多自定义API服务器的运行时配置，可以放在`ExtraConfig`中。
 
-与选项结构类似，配置有一个`Complete() CompletedConfig`设置默认值的方法。因为有必要实际调用`Complete()`底层配置，所以通常通过引入未导出的`completedConfig`数据类型来强制通过类型系统实现。这里的想法是只有一个电话`Complete()`可以`Config`变成一个`completeConfig`。如果没有完成此调用，编译器将会抱怨：
+与选项的结构类似，配置有一个`Complete() CompletedConfig`方法设置默认值。因为有必要实际调用`Complete()`来操作底层的配置数据，所以通常通过引入未导出的`completedConfig`数据类型来强制通过类型系统实现。这里的想法是只有一个电话`Complete()`可以`Config`变成一个`completeConfig`。如果没有完成此调用，编译器将会抱怨：
 
-```
+```go
 func (cfg *Config) Complete() completedConfig {
     c := completedConfig{
         cfg.GenericConfig.Complete(),
@@ -522,7 +522,7 @@ func (cfg *Config) Complete() completedConfig {
 
 最后，完成的配置可以`CustomServer`通过`New()`构造函数转换为运行时结构：
 
-```
+```go
 // New returns a new instance of CustomServer from the given config.
 func (c completedConfig) New() (*CustomServer, error) {
     genericServer, err := c.GenericConfig.New(
@@ -549,12 +549,12 @@ func (c completedConfig) New() (*CustomServer, error) {
 
 - 创建配置
 - 完成配置
-- 创造 `CustomServer`
-- 呼叫 `CustomServer.Run`
+- 创建 `CustomServer`
+- 调用 `CustomServer.Run`
 
-这是代码：
+代码：
 
-```
+```go
 func (o CustomServerOptions) Run(stopCh <-chan struct{}) error {
     config, err := o.Config()
     if err != nil {
@@ -578,17 +578,17 @@ func (o CustomServerOptions) Run(stopCh <-chan struct{}) error {
 }
 ```
 
-该`PrepareRun()`调用连接了OpenAPI规范，并可能执行其他API后安装操作。调用它之后，该`Run`方法启动实际的服务器。它会阻塞直到`stopCh`关闭。
+`PrepareRun()`调用连接了OpenAPI相关操作，并可能执行用于API安装操作。`Run`方法将实际启动服务器。进程会阻塞直到`stopCh`关闭。
 
-这个示例还连接一个名为*的启动后挂钩*`start-pizza-apiserver-informers`。顾名思义，在HTTPS服务器启动和监听后调用启动后挂钩。在这里，它启动了共享的informer工厂。
+这个例子还定义了一个名为`start-pizza-apiserver-informers`的回调。顾名思义，启动后的回调方法在HTTPS服务器启动后执行。在这里，它启动了共享的informer工厂。
 
-请注意，即使是自定义API服务器本身提供的资源的本地进程内信息，也可以通过HTTPS向localhost接口说明。因此，在服务器启动且HTTPS端口正在侦听之后启动它们是有意义的。
+请注意，自定义API服务器内部定义的本地进程内的informer，也需要通过HTTPS连接localhost接口。因此，在应该确保服务器HTTPS端口先启动并监听端口。
 
-另请注意，只有在所有启动后挂钩成功完成后，*/ healthz*端点才会返回成功。
+另请，只有在所有启动后回调方法成功完成后，*/ healthz*检测端点才会返回成功。
 
-随着所有小管道部件的到位，`pizza-apiserver`项目将所有内容包装成一个`cobra`命令：
+当所有细节功能的就绪后，`pizza-apiserver`项目将所有内容包装成一个`cobra`命令：
 
-```
+```go
 // NewCommandStartCustomServer provides a CLI handler for 'start master' command
 // with a default CustomServerOptions.
 func NewCommandStartCustomServer(
@@ -620,9 +620,9 @@ func NewCommandStartCustomServer(
 }
 ```
 
-使用`NewCommandStartCustomServer`该`main()`过程的方法非常简单：
+使用`NewCommandStartCustomServer`使得`main()`方法定义非常简单：
 
-```
+```go
 func main() {
     logs.InitLogs()
     defer logs.FlushLogs()
@@ -637,38 +637,38 @@ func main() {
 }
 ```
 
-特别注意调用`SetupSignalHandler`：它连接Unix信号处理。开`SIGINT`（在终端中按Ctrl-C时触发）`SIGKILL`，停止通道关闭。停止通道将传递给正在运行的自定义API服务器，并在停止通道关闭时关闭。因此，当接收到其中一个信号时，主循环将启动关闭。在终止之前运行请求完成（默认情况下最多60秒）的意义上，此关闭是优雅的。它还确保将所有请求发送到审计后端，并且不会删除任何审计数据。毕竟，`cmd.Execute()`将返回并且该过程将终止。
+特别注意`SetupSignalHandler`调用：它建立了Unix信号处理。当`SIGINT`（在终端中按Ctrl-C时触发）和`SIGKILL`信号触发，stopCh channel将被关闭。stopCh将传递给正在运行的自定义API服务器，服务器会在stopCh关闭时关闭。因此，当接收到其中一个信号时，主循环将开始准备关闭。这个关闭操作是优雅的，在真正终止之前正在运行的请求会尽量完成（默认情况下最多等60秒）。它还确保将所有请求发送到审计后端，并且不会丢弃任何审计数据。在这之后，`cmd.Execute()`将返回该进程将终止。
 
-## 第一个开始
+## 第一步
 
-现在我们已经准备好了第一次启动自定义API服务器的所有内容。假设您在*〜/ .kube / config中*配置了一个集群，您可以将其用于委派身份验证和授权：
+现在我们已经做好了第一次启动自定义API服务器的所有准备。假设您在*〜/ .kube / config中*配置了一个集群，您可以将其用于委托身份认证和授权：
 
-```
+```shell
 $ cd $GOPATH/src/github.com/programming-kubernetes/pizza-apiserver
- $ etcd &
-$ go run。--etcd-servers localhost：2379 \
-    --authentication-kubeconfig~ / .kube / config \
-    --authorization-kubeconfig~ / .kube / config\
-    --kubeconfig~ / .kube / config
-I0331 11：33：25.702320    64244plugins.go：158 ]
-  加载3突变接纳控制器(小号)成功以下顺序：
-     NamespaceLifecycle，MutatingAdmissionWebhook，PizzaToppings。
-I0331 11：33：25.702344    64244plugins.go：161 ]
-  加载1验证许可控制器(小号)成功以下顺序：
-     ValidatingAdmissionWebhook。
-I0331 11：33：25.714148    64244secure_serving.go：116 ]上的安全服务[:: ]：443
+$ etcd &
+$ go run . --etcd-servers localhost:2379 \
+    --authentication-kubeconfig ~/.kube/config \
+    --authorization-kubeconfig ~/.kube/config \
+    --kubeconfig ~/.kube/config
+I0331 11:33:25.702320   64244 plugins.go:158]
+  Loaded 3 mutating admission controller(s) successfully in the following order:
+     NamespaceLifecycle,MutatingAdmissionWebhook,PizzaToppings.
+I0331 11:33:25.702344   64244 plugins.go:161]
+  Loaded 1 validating admission controller(s) successfully in the following order:
+     ValidatingAdmissionWebhook.
+I0331 11:33:25.714148   64244 secure_serving.go:116] Serving securely on [::]:443
 ```
 
-它将启动并开始提供通用API端点：
+这将启动并开始提供通用API端点：
 
-```
-$ curl -k https：// localhost：443 / healthz
-好
+```shell
+$ curl -k https://localhost:443/healthz
+ok
 ```
 
-我们也可以列出 发现端点，但结果还不是很令人满意 - 我们还没有创建API，所以发现是空的：
+我们也可以调用discovery接口，不过 我们还没有创建API，所以结果是空的：
 
-```
+```shell
 $ curl -k https：// localhost：443 / apis
  {
   "kind": "APIGroupList",
@@ -676,17 +676,17 @@ $ curl -k https：// localhost：443 / apis
 }
 ```
 
-我们来看一个更高层次：
+我们来总结一下：
 
 - 我们已经使用推荐的选项和配置启动了自定义API服务器。
-- 我们有一个标准的处理程序链，包括委托身份验证，委派授权和审计。
+- 我们有一个标准的处理程序链，包括委托身份认证，委托授权和审计。
 - 我们有一台HTTPS服务器正在运行并提供对通用端点的请求：*/ logs*，*/ metrics*，*/ version*，*/ healthz*和*/ apis*。
 
-[图8-3](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver_without)显示了10,000英尺的距离。
+[图8-3](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-kube-apiserver_without)
 
 ![没有API的自定义API服务器](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0803.png)
 
-###### 图8-3。没有API的自定义API服务器
+###### 图8-3。不含API的自定义API服务器
 
 ## 内部类型和转换
 
@@ -694,36 +694,36 @@ $ curl -k https：// localhost：443 / apis
 
 每个API服务器都提供许多资源和版本（参见[图2-3](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch02.html#gvr)）。有些资源有多个版本。为了使资源的多个版本成为可能，API服务器 转换版本。
 
-为避免版本之间必要转换的二次增长，API服务器使用 实现实际API逻辑时的*内部版本*。内部版本也经常被调用 *集线器版本，*因为它是一种集合，每个其他版本都转换为和从中转换（[见图8-4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-version-star)）。内部API逻辑仅针对该集线器版本实现一次。
+为避免版本之间必要转换操作的增长，API服务器使用*内部版本*实现实际API逻辑。内部版本也经常被叫做中枢版本，因为它是一个中介，其他版本都通过它实现与目标版本的转换（[见图8-4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-version-star)）。内部API逻辑仅针对该中枢版本实现一次。
 
 ![从集线器版本转换到集线器版本](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0804.png)
 
-###### 图8-4。从集线器版本转换到集线器版本
+###### 图8-4。通过hub版本进行版本间转换
 
 [图8-5](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-conversions-figure)显示了API服务器如何在API请求的生命周期中使用内部版本：
 
 - 用户使用特定版本（例如，`v1`）发送请求。
-- API服务器解码有效负载并将其转换为内部版本。
-- API服务器通过许可和验证传递内部版本。
-- API逻辑是为注册表中的内部版本实现的。
-- `etcd`读取和写入版本化对象（例如，`v2`- 存储版本）; 也就是说，它从内部版本转换为内部版本。
+- API服务器解码请求内容并将其转换为内部版本。
+- 通过admission和验证的内部版本继续在API服务器的处理链中传递。
+- API的业务逻辑是由注册的内部版本实现的。
+- `etcd`读取和写入版本化对象（例如，`v2`- 存储版本）; 也就是说，这里会在内部版本与具体版本的转换。
 - 最后，在这种情况下，结果将转换为请求版本`v1`。
 
 ![在请求的生命周期中转换API对象](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0805.png)
 
 ###### 图8-5。在请求的生命周期中转换API对象
 
-在内部集线器版本和之间的每个边缘外部版本，进行转换。在[图8-6中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-conversions-points)，您可以计算每个请求处理程序的转换次数。在写入操作（如创建和更新）中，至少完成四次转换，如果在群集中部署了许可webhook，则会进行更多转换。如您所见，转换是每个API实现中的关键操作。
+图中每个操作环节的边缘都会发生中枢版本和外部版本的转换。在[图8-6中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-conversions-points)，您可以计算每个请求处理程序的转换次数。在写入操作（如创建和更新）中，至少完成四次转换，如果在群集中部署了admissin webhook，则会进行更多转换。如您所见，转换是每个API实现中的关键操作。
 
 ![请求生命周期内的转换和默认](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/assets/prku_0806.png)
 
-###### 图8-6。在请求的生命周期中进行转换和默认
+###### 图8-6。在请求的生命周期中进行转换和默认赋值
 
-在除转换外，[图8-6](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-conversions-points)还显示了何时发生*默认*情况。默认是填写未指定字段值的过程。默认与转换高度耦合，并且当来自用户的请求，来自`etcd`或来自接纳webhook时，始终在外部版本上完成，但从从集线器转换到外部版本时永远不会。
+在除转换外，[图8-6](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-conversions-points)还显示了何时发生*默认赋值*情况。默认赋值是填写未指定字段值的过程。默认与转换高度耦合，默认赋值总是发生在外部版本上，例如来自用户的请求，来自`etcd`或来自admission webhook时，但永远不会发生在从中枢版本到外部版本转换时。
 
 ###### 警告
 
-转变对API服务器机制至关重要。所有转换（来回）在*圆形*转换的意义上必须是正确的也是至关重要的。Roundtrippable意味着我们可以在版本图中来回转换（[图8-4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-version-star)），从随机值开始，我们永远不会丢失任何信息; 也就是说，转换是双向的，或者是一对一的。例如，我们必须能够从随机（但有效）`v1`对象转到内部集线器类型，然后`v1alpha1`返回到内部集线器类型，然后返回到`v1`。生成的对象必须等同于原始对象。
+转换是API服务器一个至关重要的机制。所有转换是双向的并且是稳定的（[图8-4](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregation-version-star)）例如，我们能够从一个v1版本对象转到内部中枢版本，然后转到`v1alpha1`版本。之后再次沿原转换路径反向转回，这时得到的`v1`版本的对象必须等同于原始对象。
 
 制作可环绕的类型通常需要经过深思熟虑; 它几乎总是驱动新版本的API设计，并且还影响旧类型的扩展，以便存储新版本携带的信息。
 
@@ -733,7 +733,7 @@ $ curl -k https：// localhost：443 / apis
 
 ## 编写API类型
 
-如我们已经看到，要向自定义API服务器添加API，我们必须编写内部集线器版本类型和外部版本类型，并在它们之间进行转换。这就是我们现在要看的[披萨示例项目](http://bit.ly/2x9C3gR)。
+如我们已经看到，要向自定义API服务器添加API，我们必须编写内部中枢版本类型和外部版本类型，并在它们之间进行转换。这就是我们现在要看的[披萨示例项目](http://bit.ly/2x9C3gR)。
 
 API类型在传统上是为*PKG的/ apis /group-name*包与该项目的*PKG的/ apis / group-name/types.go*内部类型和*PKG的/ apis / group-name/ version/types.go*用于外部的版本）。因此，对于我们的示例，*pkg / apis / restaurant*，*pkg / apis / restaurant / v1alpha1 / types.go*和*pkg / apis / restaurant / v1beta1 / types.go*。
 
@@ -741,13 +741,13 @@ API类型在传统上是为*PKG的/ apis /group-name*包与该项目的*PKG的/ 
 
 以类似的方式，将为*pkg / apis /* */* */zz_generated.defaults.go*和*pkg / apis /* */* */defaults.go上的*`defaulter-gen`输出创建默认代码，以获取开发人员编写的自定义默认代码。在我们的例子中，我们有*pkg / apis / restaurant / v1alpha1 / defaults.go*和*pkg / apis / restaurant / v1beta1 / defaults.go*。*group-nameversion**group-nameversion*
 
-我们将详细介绍转换和默认[“转换”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-conversion)和[“默认”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-defaulting)。
+我们将详细介绍转换和默认[“转换”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-conversion)和[“默认赋值”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#aggregated-apiserver-defaulting)。
 
 除了转换和默认之外，我们已经在[“剖析类型”中](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch04.html#anatomy-of-CRD-types)看到了CustomResourceDefinitions的大部分过程。我们的自定义API服务器中的外部版本的本机类型的定义方式完全相同。
 
 另外，对于内部类型，集线器类型，我们有*pkg / apis / group-name/types.go*。主要区别在于后者`SchemeGroupVersion`在*register.go*文件中引用`runtime.APIVersionInternal`（这是一个快捷方式`"__internal"`）。
 
-```
+```go
 // SchemeGroupVersion is group version used to register these objects
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version:
 runtime.APIVersionInternal}
@@ -755,13 +755,13 @@ runtime.APIVersionInternal}
 
 和外部类型文件之间的另一个区别是缺少JSON和protobuf标签。`pkg/apis/*group-name*/types.go`
 
-###### 小费
+###### 提示
 
 某些生成器使用JSON标记来检测*types.go*文件是用于外部版本还是内部版本。因此，在复制和粘贴外部类型时，请始终删除这些标记，以便创建或更新内部类型。
 
-最后但并非最不重要的是，有一个帮助程序可以将API组的所有版本安装到方案中。传统上，此助手位于*pkg / apis / group-name/install/install.go中*。对于我们的自定义API服务器*pkg / apis / restaurant / install / install.go*，它看起来很简单：
+最后但并非最不重要的是，有一个帮助程序可以将API组的所有版本安装到scheme中。通常，代码位于*pkg / apis / group-name/install/install.go中*。对于我们示例的自定义API服务器*pkg / apis / restaurant / install / install.go*，看起来比较简单：
 
-```
+```go
 // Install registers the API group and adds types to a scheme
 func Install(scheme *runtime.Scheme) {
     utilruntime.Must(restaurant.AddToScheme(scheme))
@@ -774,29 +774,29 @@ func Install(scheme *runtime.Scheme) {
 }
 ```
 
-因为我们有多个版本，所以必须定义优先级。此订单将用于确定资源的默认存储版本。它曾经在内部客户端（返回内部版本对象的客户端）中的版本选择中发挥作用;请参阅注释[“过去的版本化客户端和内部客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#internal-clients)。但是内部客户已被弃用并且正在消失。即使API服务器内的代码将来也会使用外部版本客户端。
+因为我们有多个版本，所以必须定义优先级。这里的顺序将用于确定资源的默认存储版本。它曾经在内部客户端（返回内部版本对象的客户端）中的版本选择中发挥作用;请参阅注释[“以往的版本化客户端和内部客户端”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#internal-clients)。但是内部客户已被弃用和消失。即使在API服务器中仍有相关的代码，但是将会使用指定版本的客户端。
 
 ## 转换
 
-转变获取一个版本中的对象并将其转换为另一个版本中的对象。转换是通过转换函数实现的，其中一些是手工编写的（*按惯例*放入*pkg / apis / group-name/ / versionconversion.go*），另一些是自动生成的[`conversion-gen`](http://bit.ly/31RewiP)（按惯例放入*pkg / apis / group-name/ version/zz_generated.conversion.go*）。
+转变获取一个版本中的对象并将其转换为另一个版本中的对象。转换是通过转换方法实现的，其中一些是手工编写的（*按惯例*放入*pkg/apis/group-name/version/conversion.go*），另一些是由[`conversion-gen`](http://bit.ly/31RewiP)自动生成的（按惯例放入*pkg/apis/group-name/version/zz_generated.conversion.go*）。
 
-使用该方法通过方案（参见[“Scheme”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#scheme)）启动转换`Convert()`，传递源对象`in`和目标对象`out`：
+转换是在scheme中通过（参见[“Scheme”](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch03.html#scheme)）`Convert()`方法进行，传入源对象`in`和返回目标对象`out`：
 
-```
+```go
 func (s *Scheme) Convert(in, out interface{}, context interface{}) error
 ```
 
-将`context`被描述为如下：
+`context`含义如下：
 
-```
+```go
 // ...an optional field that callers may use to pass info to conversion functions.
 ```
 
-它仅在非常特殊的情况下使用，通常是`nil`。在本章的后面，我们将介绍转换函数范围，它允许我们从转换函数中访问此上下文。
+它仅在非常特殊的情况下使用，通常是`nil`。在本章的后面，我们将介绍转换方法范围，它允许我们从转换方法中访问此上下文。
 
-为了进行实际转换，该方案了解所有Golang API类型，它们的类型GroupVersionKinds，以及GroupVersionKinds之间的转换函数。为此，`conversion-gen`寄存器通过本地方案构建器生成转换函数。在我们的示例自定义API服务器中，*zz_generated.conversion.go*文件的开头如下：
+为了进行实际转换，该方案了解所有Golang API类型，它们的GroupVersionKinds类型，以及GroupVersionKinds之间的转换函数。为此，`conversion-gen`通过本地scheme构建器注册生成的转换方法。在示例自定义API服务器*zz_generated.conversion.go*文件可见：
 
-```
+```go
 func init() {
     localSchemeBuilder.Register(RegisterConversions)
 }
@@ -2400,7 +2400,7 @@ pizza.restaurant.programming-kubernetes.info/margherita创建
 
 或者，`etcd`群集控制平面的（即，`kube-apiserver`）可以使用。取决于环境 - 自我部署，内部部署或托管服务，如Google容器引擎（GKE） - 这可能是可行的，或者它可能是不可能的，因为用户根本无法访问集群（如果是这样的话）与GKE）。在可行的情况下，自定义API服务器必须使用与Kubernetes API服务器或其他`etcd`使用者使用的密钥路径不同的密钥路径。在我们的示例自定义API服务器中，它看起来像这样：
 
-```
+```go
 const defaultEtcdPathPrefix =
     "/registry/pizza-apiserver.programming-kubernetes.github.com"
 
@@ -2424,19 +2424,19 @@ func NewCustomServerOptions() *CustomServerOptions {
 
 根据上下文，必须选择其中一个选项。最后，聚合API服务器当然也可以使用其他存储后端，至少在理论上，因为它需要大量自定义代码来实现*k8s.io/apiserver*存储接口。
 
-# 摘要
+# 总结
 
-这是一个非常大的章节，你把它做到了最后。您已经掌握了很多关于Kubernetes中API的背景知识以及它们的实现方式。
+这是非常长的一章，看到此处。您已经明白了很多关于Kubernetes中API的背景知识以及实现方式。
 
-我们看到了自定义API服务器的聚合如何适应Kubernetes集群的体系结构。我们了解了自定义API服务器如何从Kubernetes API服务器接收代理请求。我们已经了解了Kubernetes API服务器如何预先验证这些请求，以及如何使用外部版本和内部版本实现API组。我们学习了如何将对象解码为Golang结构，它们如何被默认，它们如何转换为内部类型，以及它们如何通过许可和验证并最终到达注册表。我们看到了如何将策略插入通用注册表以实现“普通”Kubernetes类REST资源，如何添加自定义许可以及如何使用自定义初始化程序配置自定义许可插件。`APIServices`。我们了解了如何配置RBAC规则以允许自定义API服务器完成其工作。我们讨论了如何`kubectl`查询API组。最后，我们学习了如何使用证书保护与自定义API服务器的连接。
+我们看到了有关自定义API服务器的聚合功能在Kubernetes集群的架构中是如何起作用的。我们了解了自定义API服务器如何从Kubernetes API服务器接收代理过来的请求。我们已经了解了Kubernetes API服务器如何预先验证这些请求，以及外部版本和内部版本的API组是如何实现的。我们学习了如何将对象解码为Golang结构，如何设置默认值，如何被转换为内部类型，以及它们如何通过admission和验证并最终被注册。我们看到了如何将策略插入通用注册表以实现“普通”Kubernetes类REST资源，如何添加自定义许可以及如何使用自定义初始化程序配置自定义许可插件。`APIServices`。我们了解了如何配置RBAC规则以允许自定义API服务器完成其工作。我们讨论了`kubectl`是如何查询API组的。最后，我们学习了如何使用证书对连接到自定义API服务器的连接进行安全验证。
 
-这很多。现在，您可以更好地了解Kubernetes中的API以及它们的实现方式，并希望您有动力去做以下一项或多项：
+现在，您应该对Kubernetes中的API以及它们的实现方式有了更深入的了解，并希望您有动力去做以下一项或多项：
 
 - 实现您自己的自定义API服务器
 - 了解Kubernetes的内部运作方式
-- 将来有助于Kubernetes
+- 将来参与贡献Kubernetes社区中
 
-我们希望您已经找到了一个很好的起点。
+我们对以上内容的学习，希望您已经找到了一个不错的起点。
 
 [1正常](https://learning.oreilly.com/library/view/programming-kubernetes/9781492047094/ch08.html#idm46336853170760-marker)删除意味着客户端可以通过正常删除期间作为删除调用的一部分。实际的删除是由控制器`kubelet`通过强制删除异步完成（对pod执行的操作）。这样，豆荚有时间干净地关闭。
 
